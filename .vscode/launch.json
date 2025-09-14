@@ -1,0 +1,15 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"request": "launch",
+			"name": "Server",
+			"type": "node",
+			"program": "${workspaceFolder}/server/main.ts",
+			"cwd": "${workspaceFolder}/server",
+			"runtimeExecutable": "tsx",
+			"envFile": "${workspaceFolder}/server/.env",
+			"console": "integratedTerminal"
+		}
+	]
+}

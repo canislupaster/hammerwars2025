@@ -1,0 +1,243 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,100..700;1,100..700&family=Oxanium:wght@200..800&display=swap');
+@import "tailwindcss";
+
+@theme {
+	--font-big: Oxanium;
+	--font-mono: "IBM Plex Sans";
+
+--color-zinc-50:  #d0e6eb;
+--color-zinc-100: #c0e1e7;
+--color-zinc-150: #b6dce3;
+--color-zinc-200: #add8e1;
+--color-zinc-300: #81c1ce;
+--color-zinc-400: #54a5b6;
+--color-zinc-500: #3d8392;
+--color-zinc-600: #425c61;
+--color-zinc-700: #2f3c3e;
+--color-zinc-800: #1a1c1c;
+--color-zinc-850: #1f2628;
+--color-zinc-900: #131313;
+--color-zinc-950: #0d0e0e;
+    
+  --color-neutral-950: #0a0a0a;
+  --color-gray-100: #ebedec;
+}
+
+@custom-variant dark (&:is(.dark, .dark *));
+@custom-variant theme (&:is(.dark *,.light *));
+@custom-variant enabled (&:not(:disabled));
+@custom-variant valid (&:not(:invalid));
+
+h3,h2,h1 {
+	font-family: var(--font-big);
+}
+
+html, body {
+	font-family: var(--font-mono);
+  scroll-behavior: smooth;
+  font-size-adjust: 0.7;
+}
+
+*:not(.ease-out, .ease-in) {
+  animation-timing-function: cubic-bezier(.73,-0.21,.21,1.23);
+  transition-timing-function: cubic-bezier(.73,-0.21,.21,1.23);
+}
+
+button:not(:disabled) {
+	cursor: pointer;
+}
+
+@theme {
+  --animate-expand: expand 0.2s forwards;
+  --animate-fade-in: fade-in 1s forwards;
+  --animate-fade-out: fade-out 1s forwards;
+
+  @keyframes fade-in {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+
+  @keyframes expand {
+    0% { transform: scaleY(0.8) scaleX(0.9); }
+    100% { transform: scaleY(1) scaleX(1); }
+  }
+
+  @keyframes expand-down {
+    0% { transform: scaleY(0); }
+    100% { transform: scaleY(1); }
+  }
+
+  @keyframes fade-out {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}
+
+.editor {
+	grid-template:
+		"a a a a" 3.5rem
+		"b c d e" 1fr
+    "b c d e" 1.8fr / 1.2fr auto 1fr 0.7fr;
+}
+
+.editor-top { grid-area: a; }
+.editor-nodebar { grid-area: c; }
+.editor-left { grid-area: b; }
+.editor-right { grid-area: e; }
+.editor-mid { grid-area: d; }
+
+.main-text p {
+  text-indent: 1rem;
+}
+
+.main-text p:not(:last-child) {
+  margin-bottom: 1rem;
+}
+
+.story-active i, .story-active em {
+  font-style: normal;
+  animation: italic-slant 2s forwards;
+}
+
+.story-active b, .story-active strong {
+  animation: bold-weight 2s forwards;
+}
+
+@keyframes italic-slant {
+  from { color: var(--color-amber-300); font-style: oblique 0deg; }
+  50% { font-style: oblique 20deg; }
+  100% { color: inherit; font-style: oblique 30deg; }
+}
+
+@keyframes bold-weight {
+  from { color: var(--color-amber-300); font-weight: normal; }
+  to { color: inherit; font-weight: bolder; }
+}
+
+.story-active .rainbow > span {
+  line-height: 1em;
+  animation: rainbow 3s infinite both;
+}
+
+@keyframes rainbow {
+  0% { filter: hue-rotate(0deg); font-size: 0.9em; font-weight: normal; }
+  50% { filter: hue-rotate(180deg); font-size: 1.2em; font-weight: bolder; }
+  100% { filter: hue-rotate(0deg); font-size: 0.9em; font-weight: normal; }
+}
+
+@keyframes blinker { to { opacity: 0; } }
+.cursor {
+  display: inline-block;
+  vertical-align: text-top;
+  width: 10px;
+  height: 1.2rem;
+  margin-left: -2px;
+  background: linear-gradient(to right, #d1ffde4d, #5efd8b);
+}
+
+.cursor-blink {
+  animation: blinker 0.7s cubic-bezier(0.98, -0.01, 0.09, 1.01) infinite alternate
+}
+
+.main-text .text-bit {
+  animation: fade-in 0.1s linear forwards;
+}
+
+dialog::backdrop {
+  background: none;
+}
+
+@keyframes bganim-expand {
+  0% {  opacity: 0.5; color: var(--color-amber-300); }
+  100% { color: inherit; }
+}
+
+@keyframes bganim-intro {
+  0% {  color: var(--color-zinc-300); opacity: 1; }
+  100% { color: var(--color-gray-600); opacity: 0.1; }
+}
+
+.bg-anim {
+  animation: bganim-intro 0.5s;
+}
+
+.bg-anim span {
+  display: inline-block;
+  overflow: hidden;
+}
+
+.bg-anim span.adding {
+  animation: bganim-expand 0.5s;
+}
+
+.bg-anim span.removing {
+  animation: bganim-expand 0.5s reverse both;
+}
+
+/* why did i do this */
+@keyframes back {
+	0% {
+		opacity: 0;
+		transform: scale(0.4) translateX(70%);
+	}
+	100% {
+		opacity: 1;
+		transform: scale(1) translateX(-25%);
+	}
+}
+
+@keyframes arrow-big {
+	0% {
+		opacity: 0;
+		transform: scaleX(0.2) translateX(20%) scaleY(0);
+	}
+	20% {
+		opacity: 0;
+		transform: scaleX(0.5) translateX(20%) scaleY(0.2);
+	}
+	100% {
+		opacity: 1;
+		transform: scaleX(0.6) translateX(-65%) scaleY(0.7);
+	}
+}
+
+@keyframes rose {
+  0% { transform: translateX(0) scale(1) rotate(0deg); }
+	100% {
+    transform: translateX(220%) scale(0.8) rotate(230deg);
+	}
+}
+
+@keyframes subrose-text {
+  0% { opacity: 1; transform: scale(1) translateX(0); }
+	100% {
+		opacity: 0;
+		transform: scale(0.5) translateX(-100%);
+	}
+}
+
+@keyframes arrow-sm {
+	0% {
+		opacity: 0;
+		transform: scaleX(0.4) translateX(40%) scaleY(0);
+	}
+	100% {
+		opacity: 1;
+		transform: scaleX(0.8) translateX(-170%) scaleY(1);
+	}
+}
+
+svg.logo * {
+	transform-box:border-box;
+	transform-origin: center;
+	animation-duration: 0.5s;
+	animation-timing-function: cubic-bezier(0.8, 0, 0.2, 1);
+	animation-play-state: paused;
+	animation-fill-mode: both;
+}
+
+svg.logo .arrow-big { animation-name: arrow-big; }
+svg.logo .subrose-text { animation-name: subrose-text; }
+svg.logo .arrow-sm { animation-name: arrow-sm; }
+svg.logo .rose { animation-name: rose; }
+svg.logo .back { animation-name: back; }

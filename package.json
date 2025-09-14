@@ -1,0 +1,11 @@
+{
+	"devDependencies": {
+		"@eslint/js": "^9",
+		"globals": "^16",
+		"dprint": "^0.50.2",
+		"eslint": "^9",
+		"eslint-config-preact": "^2",
+		"husky": "^9",
+		"typescript-eslint": "^8"
+	}
+}

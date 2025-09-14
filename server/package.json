@@ -1,0 +1,24 @@
+{
+  "name": "hammerwars2025-server",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "run": "pnpm exec tsx ./main.ts"
+  },
+  "type": "module",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@hono/node-server": "^1.19.2",
+    "better-sqlite3": "^12.2.0",
+    "hono": "^4.9.7",
+    "kysely": "^0.28.5",
+    "tsx": "^4.20.5",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.3.1"
+  }
+}
