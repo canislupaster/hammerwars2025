@@ -1138,8 +1138,6 @@ export function Container(
 	{ children, className, ...props }: { children?: ComponentChildren; className?: string }
 		& JSX.HTMLAttributes<HTMLDivElement>,
 ) {
-	const { theme } = useContext(ThemeContext);
-
 	const [count, setCount] = useState(0);
 	const incCount = useCallback(() => {
 		let r: number;
@@ -1148,12 +1146,6 @@ export function Container(
 		}); // look away child
 		return r!;
 	}, [setCount]);
-
-	useEffect(() => {
-		const html = document.getElementsByTagName("html")[0];
-		html.classList.add(theme);
-		return () => html.classList.remove(theme);
-	}, [theme, incCount]);
 
 	const toastKey = useRef(1);
 	const [toasts, setToasts] = useState<[number, string][]>([[0, ""]]);
@@ -1199,7 +1191,7 @@ export function Container(
 
 	const inner = <>
 		{createPortal(
-			<div className="fixed bottom-5 left-2 px-10 z-[12000] flex flex-col items-start gap-3">
+			<div className="dark font-body fixed bottom-5 left-2 px-10 z-[12000] flex flex-col items-start gap-3">
 				{toasts.map((x, i) =>
 					<ShowTransition key={x[0]} open={i != 0} openClassName="opacity-100"
 						closedClassName="opacity-0">
@@ -1223,10 +1215,13 @@ export function Container(
 		)}
 
 		<div
-			className={twMerge("font-body dark:text-gray-50 text-gray-950 min-h-dvh relative", className)}
+			className={twMerge(
+				"dark font-body dark:text-gray-50 text-gray-950 min-h-dvh relative",
+				className,
+			)}
 			{...props}>
 			{children}
-			<div className="bg-neutral-100 dark:bg-neutral-950 absolute left-0 top-0 bottom-0 right-0 -z-50" />
+			<div className="bg-neutral-950 absolute left-0 top-0 bottom-0 right-0 -z-50" />
 		</div>
 	</>;
 

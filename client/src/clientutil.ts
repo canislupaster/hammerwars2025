@@ -12,6 +12,11 @@ export class APIError extends Error {
 		super(msg);
 	}
 }
+export class APINeedLogin extends APIError {
+	constructor() {
+		super("You need to login.");
+	}
+}
 
 const apiBaseUrl = import.meta.env["VITE_API_BASE_URL"] == ""
 	? new URL("/", self.location.href).href
@@ -30,6 +35,7 @@ export async function makeReq<T extends keyof API>(...args: APIRequest[T]) {
 	if (typeof args[args.length-1] == "function") {
 		(args[args.length-1] as (resp: ServerResponse<T>) => void)(data);
 	}
-	if (data.type == "error") throw new APIError(data.message);
+	if (data.type == "internalError") throw new APIError(data.message);
+	else if (data.type == "needLogin") throw new APINeedLogin();
 	return data.data;
 }

@@ -30,9 +30,16 @@ export function parseExtra(str: string | null): unknown {
 }
 
 export const validNameRe = "^[A-Za-z0-9 _\\-]{5,30}$";
-export type TeamData = { name: string; inPerson: boolean };
-export type UserInfo = { name: string; email: string; discord: string };
-export type UserData = { info: Partial<UserInfo>; submitted: UserInfo | null; lastEdited: number };
+export type TeamData = { name: string };
+export type UserInfo = {
+	name: string;
+	discord: string | null;
+	inPerson: {
+		needTransportation: boolean;
+		pizza: "cheese" | "pepperoni" | "sausage" | null;
+		sandwich: "veggieWrap" | "spicyChicken" | "chicken" | null;
+	} | null;
+};
 
 export type ContestProperties = {
 	registrationEnds: number;
@@ -40,9 +47,29 @@ export type ContestProperties = {
 	internetAccessAllowed: boolean;
 };
 
-export type API = {};
+type Session = { id: number; key: string };
 
-export type ServerResponse<K extends keyof API> = { type: "error"; message: string } | {
-	type: "ok";
-	data: API[K] extends { response: unknown } ? API[K]["response"] : null;
+export type API = {
+	register: { request: { email: string }; response: "sent" | "alreadySent" };
+	login: { request: { email: string; password: string }; response: Session | "incorrect" };
+	checkEmailVerify: { request: { id: number; email: string; key: string }; response: boolean };
+	createAccount: {
+		request: { id: number; email: string; key: string; password: string };
+		response: Session;
+	};
+	setPassword: { auth: true; request: { newPassword: string } };
+	updateInfo: { auth: true; request: { id: number; info: UserInfo; submit: boolean } };
+	deleteUser: { auth: true };
+	// like yeah base64 is not ideal but saves me time
+	setTeam: { auth: true; name: string; logo: string };
+	joinTeam: { auth: true; joinCode: string };
+	leaveTeam: { auth: true };
 };
+
+export type ServerResponse<K extends keyof API> =
+	| (API[K] extends { auth: true } ? { type: "needLogin" } : never)
+	| { type: "internalError"; message: string }
+	| {
+		type: "ok";
+		data: API[K] extends { response: unknown } ? API[K]["response"] : null;
+	};
