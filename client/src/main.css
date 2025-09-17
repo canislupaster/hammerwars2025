@@ -23,8 +23,8 @@
   --color-gray-100: #ebedec;
 }
 
-@custom-variant dark (&:is(.dark, .dark *));
-@custom-variant theme (&:is(.dark *,.light *));
+@custom-variant dark (&);
+@custom-variant theme (&);
 @custom-variant enabled (&:not(:disabled));
 @custom-variant valid (&:not(:invalid));
 

@@ -1,3 +1,14 @@
+export type APIErrorObject = {
+	type: "internal" | "badRequest" | "needLogin";
+	msg: string;
+	status: number;
+};
+export class APIError extends Error {
+	constructor(public error: APIErrorObject) {
+		super(error.msg);
+	}
+}
+
 export function fill<T>(len: number, v: T | ((idx: number) => T)): T[] {
 	if (typeof v == "function") {
 		return [...new Array(len) as unknown[]].map((_, i): T => (v as ((idx: number) => T))(i));
@@ -30,7 +41,10 @@ export function parseExtra(str: string | null): unknown {
 }
 
 export const validNameRe = "^[A-Za-z0-9 _\\-]{5,30}$";
-export type TeamData = { name: string };
+export const joinCodeRe = "^\\d{10}$";
+export const logoMimeTypes = ["image/jpeg", "image/png"] as const;
+export const logoMaxSize = 1024*64;
+
 export type UserInfo = {
 	name: string;
 	discord: string | null;
@@ -47,29 +61,40 @@ export type ContestProperties = {
 	internetAccessAllowed: boolean;
 };
 
-type Session = { id: number; key: string };
+export type Session = { id: number; key: string };
 
 export type API = {
 	register: { request: { email: string }; response: "sent" | "alreadySent" };
 	login: { request: { email: string; password: string }; response: Session | "incorrect" };
-	checkEmailVerify: { request: { id: number; email: string; key: string }; response: boolean };
-	createAccount: {
-		request: { id: number; email: string; key: string; password: string };
-		response: Session;
-	};
+	checkEmailVerify: { request: { id: number; key: string }; response: boolean };
+	createAccount: { request: { id: number; key: string; password: string }; response: Session };
+	checkSession: { auth: true };
+	// logs u out
 	setPassword: { auth: true; request: { newPassword: string } };
-	updateInfo: { auth: true; request: { id: number; info: UserInfo; submit: boolean } };
+	getInfo: {
+		auth: true;
+		response: {
+			info: Partial<UserInfo>;
+			submitted: boolean;
+			lastEdited: number;
+			team: { name: string; logo: string | null; joinCode: string } | null;
+		};
+	};
+	updateInfo: { auth: true; request: { info: Partial<UserInfo>; submit: boolean } };
 	deleteUser: { auth: true };
 	// like yeah base64 is not ideal but saves me time
-	setTeam: { auth: true; name: string; logo: string };
-	joinTeam: { auth: true; joinCode: string };
+	setTeam: {
+		auth: true;
+		request: {
+			name: string;
+			logo: { base64: string; mime: typeof logoMimeTypes[number] } | "remove" | null;
+		};
+	};
+	joinTeam: { auth: true; request: { joinCode: string } };
 	leaveTeam: { auth: true };
 };
 
-export type ServerResponse<K extends keyof API> =
-	| (API[K] extends { auth: true } ? { type: "needLogin" } : never)
-	| { type: "internalError"; message: string }
-	| {
-		type: "ok";
-		data: API[K] extends { response: unknown } ? API[K]["response"] : null;
-	};
+export type ServerResponse<K extends keyof API> = { type: "error"; error: APIErrorObject } | {
+	type: "ok";
+	data: API[K] extends { response: unknown } ? API[K]["response"] : null;
+};

@@ -2,15 +2,20 @@
 // have fun :) dont worry, i know...
 
 import "disposablestack/auto";
-import { IconChevronRight } from "@tabler/icons-preact";
+import { IconChevronRight, IconMail } from "@tabler/icons-preact";
 import { ComponentChildren, JSX, render } from "preact";
-import { LocationProvider, Route, Router, useLocation } from "preact-iso";
-import { useContext, useEffect, useErrorBoundary, useMemo, useRef, useState } from "preact/hooks";
+import { LocationProvider, Route, Router, useLocation, useRoute } from "preact-iso";
+import { useCallback, useContext, useEffect, useErrorBoundary, useMemo, useRef,
+	useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
-import { fill } from "../../shared/util";
-import { APINeedLogin } from "./clientutil";
-import { Anchor, bgColor, Button, Container, Dropdown, ease, GotoContext, HiddenInput, IconButton,
-	Input, Select, Text, Theme, ThemeContext, useAsyncEffect, useGoto, useMd, useTitle } from "./ui";
+import { API, APIError, fill, joinCodeRe, logoMaxSize, logoMimeTypes, ServerResponse,
+	stringifyExtra, UserInfo, validNameRe } from "../../shared/util";
+import { apiBaseUrl, LocalStorage, useRequest } from "./clientutil";
+import { Scoreboard } from "./scoreboard";
+import { Alert, AlertErrorBoundary, Anchor, AppTooltip, bgColor, Button, Container, Divider,
+	Dropdown, ease, GotoContext, HiddenInput, IconButton, Input, interactiveContainerDefault, Loading,
+	Modal, Select, Text, Theme, ThemeContext, ThemeSpinner, throttle, useAsyncEffect, useGoto, useMd,
+	useTitle, useValidity } from "./ui";
 
 function Hero() {
 	const container = useRef<HTMLDivElement>(null);
@@ -217,6 +222,257 @@ function Home() {
 	</>;
 }
 
+function RegistrationEditor() {
+	const [data, setData] = useState<API["getInfo"]["response"] | null>(null);
+	const info = useRequest({
+		route: "getInfo",
+		initRequest: true,
+		handler(res) {
+			if (res.type == "ok") setData(res.data);
+		},
+	});
+
+	const infoCall = info.call;
+	const refresh = useCallback((x: ServerResponse<keyof API>) => {
+		if (x.type == "ok") infoCall();
+	}, [infoCall]);
+
+	const updateInfo = useRequest({ route: "updateInfo", handler: refresh });
+
+	const formRef = useRef<HTMLFormElement>(null);
+
+	const updateTeam = useRequest({ route: "setTeam", handler: refresh });
+
+	const joinTeam = useRequest({ route: "joinTeam", handler: refresh });
+	const leaveTeam = useRequest({ route: "leaveTeam", handler: refresh });
+
+	const teamNameValidity = useValidity(data?.team?.name ?? "", v => {
+		if (data?.team) setData({ ...data, team: { ...data.team, name: v } });
+	});
+
+	const [createTeamOpen, setCreateTeamOpen] = useState(false);
+	const [createTeamName, setCreateTeamName] = useState("");
+
+	const [joinTeamOpen, setJoinTeamOpen] = useState(false);
+	const [joinTeamCode, setJoinTeamCode] = useState("");
+	const [logoError, setLogoError] = useState<string | null>(null);
+
+	const loading = info.loading || updateInfo.loading || updateTeam.loading || leaveTeam.loading
+		|| joinTeam.loading;
+	const team = data?.team;
+
+	if (data == null) return <Loading />;
+
+	return <>
+		<Text v="big">User information</Text>
+		{data.submitted
+			&& <Alert title="Unsubmit to edit your information" txt="Don't forget to resubmit!" />}
+		<form ref={formRef} onSubmit={ev => {
+			ev.preventDefault();
+			if (!data.submitted && ev.currentTarget.reportValidity()) {
+				updateInfo.call({ info: data.info, submit: true });
+			}
+		}}>
+			{/* user info editing stuff */}
+			{data.submitted
+				? <Button loading={loading} onClick={() => {
+					updateInfo.call({ info: data.info, submit: false });
+				}}>
+					Unsubmit
+				</Button>
+				: <div className="flex flex-row">
+					<Button loading={loading} className={bgColor.green}>Submit</Button>
+					<AppTooltip content="Use this option if you'd like to submit your information later.">
+						<Button loading={loading} onClick={() => {
+							if (formRef.current!.reportValidity()) {
+								updateInfo.call({ info: data.info, submit: false });
+							}
+						}}>
+							Save
+						</Button>
+					</AppTooltip>
+				</div>}
+		</form>
+		<p>
+			Last {data.submitted ? "submitted" : "saved"} at {new Date(data.lastEdited).toLocaleString()}
+		</p>
+
+		<Divider />
+
+		<Text v="big">Team management</Text>
+
+		<Modal open={createTeamOpen} onClose={() => setCreateTeamOpen(false)} title="Create team">
+			<form onSubmit={ev => {
+				ev.preventDefault();
+				if (ev.currentTarget.reportValidity()) {
+					updateTeam.call({ name: createTeamName, logo: null });
+					setCreateTeamOpen(false);
+				}
+			}}>
+				<Text>Choose your team name</Text>
+				<Input value={createTeamName} onInput={ev => setCreateTeamName(ev.currentTarget.value)}
+					pattern={validNameRe} />
+				<Button>Create team</Button>
+			</form>
+		</Modal>
+
+		<Modal open={joinTeamOpen} onClose={() => setJoinTeamOpen(false)} title="Join team">
+			<form onSubmit={ev => {
+				ev.preventDefault();
+				if (ev.currentTarget.reportValidity()) {
+					joinTeam.call({ joinCode: joinTeamCode });
+					setJoinTeamOpen(false);
+				}
+			}}>
+				<Text>Enter join code</Text>
+				<Input value={joinTeamCode} onInput={ev => setJoinTeamCode(ev.currentTarget.value)}
+					pattern={joinCodeRe} />
+				<Button>Join team</Button>
+			</form>
+		</Modal>
+
+		{team
+			? <div>
+				<Text>Team name</Text>
+				<Input disabled={loading} {...teamNameValidity} pattern={validNameRe} onBlur={ev => {
+					teamNameValidity.onBlur(ev);
+					if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
+				}} />
+				{team.logo == null ? <Text>No team logo set.</Text> : <div>
+					<img src={new URL(team.logo, apiBaseUrl).href} />
+					<Button onClick={() => updateTeam.call({ name: team.name, logo: "remove" })}>
+						Remove logo
+					</Button>
+				</div>}
+				<Text>Upload logo</Text>
+
+				<input className={interactiveContainerDefault} type="file" onInput={ev => {
+					const file = ev.currentTarget.files?.[0];
+					if (file) {
+						if (!logoMimeTypes.includes(file.type as typeof logoMimeTypes[number])) {
+							setLogoError(`Logo should be JPEG or PNG, not ${file.type}.`);
+						} else if (file.size > logoMaxSize) {
+							setLogoError(`Logo is > ${logoMaxSize/1024} MB, please choose something smaller`);
+						} else {
+							setLogoError(null);
+							void file.arrayBuffer().then(buf => {
+								updateTeam.call({
+									name: team.name,
+									logo: {
+										base64: btoa(String.fromCharCode(...new Uint8Array(buf))),
+										mime: file.type as typeof logoMimeTypes[number],
+									},
+								});
+							});
+						}
+					}
+				}} />
+
+				{logoError != null && <Alert title="Invalid logo image" txt={logoError} />}
+
+				<Button loading={loading} onClick={() => {
+					leaveTeam.call();
+				}}>
+					Leave team
+				</Button>
+			</div>
+			: <div>
+				<Button loading={loading} onClick={() => setCreateTeamOpen(true)}>Create team</Button>
+				<Button loading={loading} onClick={() => setJoinTeamOpen(true)}>Join team</Button>
+			</div>}
+	</>;
+}
+
+function RegisterPage() {
+	const [email, setEmail] = useState("");
+	const req = useRequest({ route: "register" });
+	const goto = useGoto();
+
+	const { call, current } = useRequest({ route: "checkSession" });
+	const [noSession, setNoSession] = useState(false);
+	useEffect(() => {
+		if (LocalStorage.session != undefined) call();
+		else setNoSession(true);
+	}, [call]);
+
+	return current?.type == "ok"
+		? <RegistrationEditor />
+		: current == null && !noSession
+		? <Loading />
+		: req.current?.type == "ok"
+		? <div>
+			<Text v="big">
+				{req.current.data == "sent" ? "We sent you an email" : "We already sent an email"}
+			</Text>
+			{req.current.data == "alreadySent"
+				&& <Text v="md">We aren't sending another! Check your junk, etc.</Text>}
+			<IconMail size={64} />
+			<Anchor onClick={() => req.reset()}>Try another email</Anchor>
+		</div>
+		: <div>
+			please enter your email:
+			{req.loading ? <Loading /> : <form onSubmit={ev => {
+				ev.preventDefault();
+				if (ev.currentTarget.reportValidity()) {
+					req.call({ email });
+				}
+			}}>
+				Email:
+				<Input value={email} onInput={ev => setEmail(ev.currentTarget.value)} type="email" />
+				<Button type="submit">Register</Button>
+			</form>}
+			already have an account?
+			<Anchor onClick={() => goto("/login")}>login instead</Anchor>
+		</div>;
+}
+
+function VerifyPage() {
+	const loc = useLocation();
+	const { call, loading, ...verified } = useRequest({ route: "checkEmailVerify" });
+	useEffect(() => {
+		if (loc.query.id && isFinite(Number.parseInt(loc.query.id, 10)) && loc.query.key) {
+			call({ id: Number.parseInt(loc.query.id, 10), key: loc.query.key });
+		} else {
+			throw new Error("Invalid verify URL");
+		}
+	}, [call, loc.query]);
+
+	const [pass, setPass] = useState("");
+	const goto = useGoto();
+	const createAccReq = useRequest({
+		route: "createAccount",
+		handler(res) {
+			if (res.type == "ok") {
+				LocalStorage.session = res.data;
+				goto("/register");
+			}
+		},
+	});
+
+	if (loading || createAccReq.loading) return <Loading />;
+	if (verified.current == null || verified.current.type != "ok" || !verified.current.data) {
+		return <ErrorPage errName="This verification link is invalid">
+			<Text>Please contact us for support through our Discord.</Text>
+		</ErrorPage>;
+	}
+
+	return <form onSubmit={ev => {
+		ev.preventDefault();
+		if (ev.currentTarget.reportValidity()) {
+			createAccReq.call({ id: verified.request.id, key: verified.request.key, password: pass });
+		}
+	}}>
+		<Text v="big">Just a few more steps</Text>
+		enter your password
+		<Input minLength={8} maxLength={100} type="password" value={pass}
+			onInput={ev => setPass(ev.currentTarget.value)} />
+		<Button type="submit">Register</Button>
+		<Text v="dim">
+			If you forget this, just reuse the link from your verification email to reset it.
+		</Text>
+	</form>;
+}
+
 function ErrorPage(
 	{ errName, err, reset, children }: {
 		errName?: string;
@@ -237,24 +493,86 @@ function ErrorPage(
 	</div>;
 }
 
-function LoginPage({ failed }: { failed: boolean }) {
-	return <div>login!</div>;
+function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
+	const [user, setUser] = useState("");
+	const [pass, setPass] = useState("");
+	const [incorrect, setIncorrect] = useState(false);
+
+	const goto = useGoto();
+	const login = useRequest({
+		route: "login",
+		handler(res) {
+			if (res.type == "ok") {
+				if (res.data == "incorrect") {
+					setIncorrect(true);
+					return;
+				}
+				LocalStorage.session = res.data;
+
+				if (done) done();
+				else goto("/register");
+			}
+		},
+	});
+
+	return <div>
+		{failed
+			&& <Alert bad title="You aren't authorized to do that"
+				txt="Please login to an account with privileges." />}
+		<Text v="big">Login</Text>
+		<form onSubmit={ev => {
+			ev.preventDefault();
+			if (ev.currentTarget.reportValidity()) {
+				login.call({ email: user, password: pass });
+			}
+		}}>
+			<Input type="email" value={user} onInput={ev => setUser(ev.currentTarget.value)} />
+			<Input type="password" minLength={8} maxLength={100} value={pass}
+				onInput={ev => setPass(ev.currentTarget.value)} />
+			<Button type="submit">Continue</Button>
+			{incorrect
+				&& <Alert bad title="Incorrect email or password"
+					txt="Please try again. You can revisit the verification email to reset your password." />}
+		</form>
+	</div>;
 }
 
 function InnerApp() {
+	const loc = useLocation();
+	const [oldRoute, setOldRoute] = useState<string | null>(null);
+	const errorShown = useRef(false);
+	const errorPath = "/error";
 	const [err, resetErr] = useErrorBoundary(err => {
 		console.error("app error boundary", err);
+		setOldRoute(loc.url);
+		errorShown.current = true;
+		loc.route(errorPath);
 	}) as [Error | undefined, () => void];
 
-	if (err instanceof APINeedLogin) {
-		return <LoginPage failed />;
-	}
+	const retry = useCallback(() => {
+		if (oldRoute != null) loc.route(oldRoute, true);
+		resetErr();
+	}, [loc, oldRoute, resetErr]);
 
-	if (err != undefined) return <ErrorPage err={err} reset={resetErr} />;
+	useEffect(() => {
+		if (err == undefined) return;
+		if (loc.path == errorPath) errorShown.current = true;
+		else if (errorShown.current && loc.path != errorPath) retry();
+	}, [err, loc.path, resetErr, retry]);
+
+	if (err != undefined) {
+		if (err instanceof APIError && err.error.type == "needLogin") {
+			return <LoginPage failed done={retry} />;
+		}
+		return <ErrorPage err={err} reset={retry} />;
+	}
 
 	return <Router>
 		<Route path="/" component={Home} />
+		<Route path="/register" component={RegisterPage} />
 		<Route path="/login" component={LoginPage} />
+		<Route path="/verify" component={VerifyPage} />
+		{/* <Route path="/scoreboard" component={Scoreboard} /> */}
 		<Route default component={() =>
 			<ErrorPage errName="Page not found">
 				Go back <Anchor href="/">home</Anchor>.
@@ -262,9 +580,7 @@ function InnerApp() {
 	</Router>;
 }
 
-function App({ theme: initialTheme }: { theme: Theme }) {
-	const [theme, setTheme] = useState(initialTheme);
-
+function App() {
 	const route = useLocation();
 	const [nextRoute, setNextRoute] = useState<string | null>(null);
 	const routeTransitions = useRef<Set<() => Promise<void>>>(new Set());
@@ -284,10 +600,10 @@ function App({ theme: initialTheme }: { theme: Theme }) {
 		await Promise.all([...routeTransitions.current.values()].map(x => x()));
 		route.route(nextRoute);
 		setNextRoute(null);
-	}, [nextRoute, route.url, route.route]);
+	}, [nextRoute, route.route]);
 
 	return <GotoContext.Provider value={gotoCtx}>
-		<ThemeContext.Provider value={{ theme, setTheme }}>
+		<ThemeContext.Provider value={{ theme: "dark", setTheme() {} }}>
 			<Container className="flex flex-col items-center">
 				<InnerApp />
 			</Container>
@@ -298,7 +614,7 @@ function App({ theme: initialTheme }: { theme: Theme }) {
 document.addEventListener("DOMContentLoaded", () => {
 	render(
 		<LocationProvider>
-			<App theme={"dark"} />
+			<App />
 		</LocationProvider>,
 		document.body,
 	);

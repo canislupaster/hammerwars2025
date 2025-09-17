@@ -1,33 +1,49 @@
-import { API, parseExtra, ServerResponse, stringifyExtra } from "../../shared/util";
-import "vite/client";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { API, APIError, parseExtra, ServerResponse, Session,
+	stringifyExtra } from "../../shared/util";
 
-export type APIRequest = {
-	[K in keyof API]: API[K] extends { request: unknown }
-		? [K, API[K]["request"]] | [K, API[K]["request"], (resp: ServerResponse<K>) => void]
-		: [K] | [K, (resp: ServerResponse<K>) => void];
+export type LocalStorage = Partial<{ session: Session }> & { toJSON(): unknown };
+const localStorageKeys: (Exclude<keyof LocalStorage, "toJSON">)[] = ["session"];
+
+export const LocalStorage = {} as unknown as LocalStorage;
+
+for (const k of localStorageKeys) {
+	Object.defineProperty(LocalStorage, k, {
+		get() {
+			const vStr = localStorage.getItem(k);
+			return vStr != null ? parseExtra(vStr) : undefined;
+		},
+		set(newV) {
+			if (newV == undefined) localStorage.removeItem(k);
+			else localStorage.setItem(k, stringifyExtra(newV));
+			return newV as unknown;
+		},
+	});
+}
+
+type APIRequest<T extends keyof API> = API[T] extends { request: unknown } ? [API[T]["request"]]
+	: [];
+export type APIRequestParameters = {
+	[K in keyof API]: [K, ...APIRequest<K>] | [
+		K,
+		...APIRequest<K>,
+		(resp: ServerResponse<K>) => void,
+	];
 };
 
-export class APIError extends Error {
-	constructor(public msg: string) {
-		super(msg);
-	}
-}
-export class APINeedLogin extends APIError {
-	constructor() {
-		super("You need to login.");
-	}
-}
-
-const apiBaseUrl = import.meta.env["VITE_API_BASE_URL"] == ""
-	? new URL("/", self.location.href).href
-	: import.meta.env["VITE_API_BASE_URL"] as string;
+export const apiBaseUrl = new URL("/api/", import.meta.env["VITE_ROOT_URL"] as string).href;
 
 console.log(`api base url: ${apiBaseUrl}`);
 
-export async function makeReq<T extends keyof API>(...args: APIRequest[T]) {
+export async function makeRequest<T extends keyof API>(...args: APIRequestParameters[T]) {
+	const session = LocalStorage.session;
 	const resp = await fetch(new URL(args[0], apiBaseUrl), {
-		headers: { "Content-Type": "application/json" },
+		headers: {
+			"Content-Type": "application/json",
+			...session ? { Authorization: `Basic ${session.id} ${session.key}` } : {},
+		},
 		body: typeof args[1] == "function" ? undefined : stringifyExtra(args[1]),
+		credentials: import.meta.env.DEV ? "include" : "same-origin",
 		method: "POST",
 	});
 
@@ -35,7 +51,66 @@ export async function makeReq<T extends keyof API>(...args: APIRequest[T]) {
 	if (typeof args[args.length-1] == "function") {
 		(args[args.length-1] as (resp: ServerResponse<T>) => void)(data);
 	}
-	if (data.type == "internalError") throw new APIError(data.message);
-	else if (data.type == "needLogin") throw new APINeedLogin();
+	if (data.type == "error") {
+		throw new APIError(data.error);
+	}
 	return data.data;
+}
+type CurrentRequest<T extends keyof API> = {
+	current: ServerResponse<T>;
+	request: API[T] extends { request: unknown } ? API[T]["request"] : null;
+} | { current: null; request: null };
+
+export function useRequest<T extends keyof API>(
+	{ route, initRequest, handler, noThrow }: {
+		route: T;
+		initRequest?: API[T] extends { request: unknown } ? API[T]["request"] : true;
+		handler?: (resp: ServerResponse<T>) => void;
+		noThrow?: boolean;
+	},
+): Readonly<
+	CurrentRequest<T> & {
+		loading: boolean;
+		call: (...params: APIRequest<T>) => void;
+		reset: () => void;
+	}
+> {
+	const [err, setErr] = useState<unknown>(null);
+	const [loading, setLoading] = useState(0);
+	const [current, setCurrent] = useState<CurrentRequest<T>>({ current: null, request: null });
+	const handlerRef = useRef(handler);
+	useEffect(() => {
+		handlerRef.current = handler;
+	}, [handler]);
+	const call = useCallback((...params: APIRequest<T>) => {
+		setLoading(i => i+1);
+		makeRequest<T>(
+			...[route, ...params, (res: ServerResponse<T>) => {
+				setCurrent({
+					current: res,
+					request: (params.length > 0 ? params[0] : null) as unknown as CurrentRequest<
+						T
+					>["request"],
+				});
+				handlerRef.current?.(res);
+			}] as unknown as APIRequestParameters[T],
+		).catch(setErr).finally(() => setLoading(i => i-1));
+	}, [route]);
+	useEffect(() => {
+		if (initRequest != undefined) {
+			call(...(initRequest == true ? [] : [initRequest]) as APIRequest<T>);
+		}
+	}, [call, initRequest, route]);
+	useEffect(() => {
+		if (err instanceof Error && noThrow != true) throw err;
+	}, [err, noThrow]);
+	return {
+		...current,
+		loading: loading > 0,
+		call,
+		reset: useCallback(() => {
+			setErr(null);
+			setCurrent({ current: null, request: null });
+		}, []),
+	} as const;
 }

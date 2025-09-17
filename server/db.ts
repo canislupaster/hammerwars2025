@@ -1,13 +1,19 @@
 import Database from "better-sqlite3";
-import { GeneratedAlways, Insertable, InsertType, JSONColumnType, Kysely, Migration,
-	MigrationProvider, Migrator, ParseJSONResultsPlugin, Selectable, SelectType, SqliteDialect,
-	Transaction, Updateable, UpdateType } from "kysely";
-import { parseExtra, stringifyExtra, TeamData, UserInfo } from "../shared/util.ts";
+import { GeneratedAlways, Insertable, Kysely, Migration, MigrationProvider, Migrator, Selectable,
+	sql, SqliteDialect, Transaction, Updateable } from "kysely";
+import { parseExtra, stringifyExtra, UserInfo } from "../shared/util.ts";
 
 type Database = {
-	team: { id: GeneratedAlways<number>; joinCode: string; data: string; logo: Buffer };
-	user: { id: GeneratedAlways<number>; team: number | null; data: string };
-	session: { id: GeneratedAlways<number>; key: string; expires: number };
+	team: {
+		id: GeneratedAlways<number>;
+		joinCode: string;
+		name: string;
+		logo: Buffer | null;
+		logoMime: string | null;
+	};
+	emailVerification: { id: GeneratedAlways<number>; key: string; email: string };
+	user: { id: GeneratedAlways<number>; team: number | null; email: string; data: string };
+	session: { id: GeneratedAlways<number>; created: number; key: string; user: number };
 	properties: { key: string; value: string };
 };
 
@@ -15,17 +21,24 @@ export type UserData = {
 	info: Partial<UserInfo>;
 	submitted: UserInfo | null;
 	lastEdited: number;
+	passwordSalt: string;
 	passwordHash: string;
 };
 
 type DatabaseData = {
-	team: Omit<Database["team"], "data"> & { data: TeamData };
+	team: Database["team"];
 	user: Omit<Database["user"], "data"> & { data: UserData };
 	session: Database["session"];
+	emailVerification: Database["emailVerification"];
 };
 
 const db = new Kysely<Database>({
-	dialect: new SqliteDialect({ database: new Database("./db.sqlite") }),
+	dialect: new SqliteDialect({
+		database: new Database("./db.sqlite"),
+		async onCreateConnection(connection) {
+			await connection.executeQuery(sql`PRAGMA foreign_key_check`.compile(db));
+		},
+	}),
 });
 
 const migrator = new Migrator({
@@ -36,9 +49,12 @@ const migrator = new Migrator({
 				"1_init": {
 					async up(db) {
 						await db.schema.createTable("team").addColumn("id", "integer", col =>
-							col.primaryKey().autoIncrement()).addColumn("joinCode", "text", c =>
-								c.notNull()).addColumn("data", "json", c =>
-								c.notNull()).execute();
+							col.primaryKey().autoIncrement()).addColumn("name", "text", c =>
+								c.notNull()).addColumn("logo", "blob").addColumn("logoMime", "text").addColumn(
+								"joinCode",
+								"text",
+								c => c.notNull(),
+							).execute();
 						await db.schema.createTable("emailVerification").addColumn("id", "integer", c =>
 							c.primaryKey().autoIncrement()).addColumn("key", "text", c =>
 								c.notNull()).addColumn("email", "text", c =>
@@ -49,7 +65,7 @@ const migrator = new Migrator({
 								c.notNull().unique()).addColumn("data", "json", col =>
 								col.notNull()).execute();
 						await db.schema.createTable("session").addColumn("id", "integer", col =>
-							col.primaryKey().autoIncrement()).addColumn("expire", "integer", c =>
+							col.primaryKey().autoIncrement()).addColumn("created", "integer", c =>
 								c.notNull()).addColumn("key", "text", c =>
 								c.notNull()).addColumn("user", "integer", c =>
 								c.references("user.id")).execute();
@@ -80,46 +96,86 @@ if (res.error != undefined) {
 console.log("database ready");
 
 export type CrudRequest = {
-	[Create in "create" | "update"]: {
-		[Which in keyof DatabaseData]:
-			& (DatabaseData[Which] extends { data: unknown } ? { data: DatabaseData[Which]["data"] }
-				: unknown)
-			& {
-				request: {
-					which: Which;
-					id: Create extends "create" ? null : number;
-					f: (
-						...old: Create extends "create" ? [] : [Selectable<DatabaseData[Which]>]
-					) => Promise<
-						Create extends "create" ? Insertable<DatabaseData[Which]>
-							: Updateable<DatabaseData[Which]>
-					>;
-				};
-				response: Create extends "create" ? Insertable<DatabaseData[Which]>
-					: Updateable<DatabaseData[Which]> | null;
-			};
-	};
+	[Which in keyof DatabaseData]:
+		& (DatabaseData[Which] extends { data: unknown } ? { data: DatabaseData[Which]["data"] }
+			: unknown)
+		& {
+			which: Which;
+			update: (old: Selectable<DatabaseData[Which]>) => Promise<Updateable<DatabaseData[Which]>>;
+			get: Selectable<DatabaseData[Which]> | null;
+			set: Updateable<DatabaseData[Which]> | null;
+			add: Insertable<DatabaseData[Which]>;
+		};
 };
 
-export async function transaction<T>(f: (trx: Transaction<Database>) => Promise<T>): Promise<T> {
+export type DBTransaction = Transaction<Database>;
+
+export async function transaction<T>(f: (trx: DBTransaction) => Promise<T>): Promise<T> {
 	return await db.transaction().execute(f);
 }
 
-export async function crud<T extends CrudRequest["create" | "update"][keyof DatabaseData]>(
-	trx: Transaction<Database>,
-	request: T["request"],
-): Promise<T["response"]> {
-	if (request.id != null) {
-		const res = await trx.selectFrom(request.which).selectAll().where("id", "==", request.id)
-			.executeTakeFirst();
-		// messy casts here but i honestly don't care since it is nice to use
-		if (res == undefined) return null;
-		const res2 = "data" in res ? { ...res, data: parseExtra(res.data) } : res;
-		return await (request.f as (t: typeof res2) => Promise<T["response"]>)(res2);
-	} else {
-		const v = await request.f();
-		const v2 = "data" in v ? { ...v, data: stringifyExtra(v.data) } : v;
-		await trx.insertInto(request.which).values(v2).execute();
-		return v2 as unknown as T["response"];
+export async function getDb<T extends keyof DatabaseData>(
+	trx: DBTransaction,
+	table: T,
+	id: number,
+): Promise<CrudRequest[T]["get"]> {
+	const res = await trx.selectFrom(table satisfies keyof DatabaseData).selectAll().where(
+		"id",
+		"=",
+		id,
+	).executeTakeFirst();
+	if (res == undefined) return null;
+	return ("data" in res ? { ...res, data: parseExtra(res.data) } : res) as unknown as CrudRequest[
+		T
+	]["get"];
+}
+
+export async function getDbCheck<T extends keyof DatabaseData>(
+	trx: DBTransaction,
+	table: T,
+	id: number,
+): Promise<NonNullable<CrudRequest[T]["get"]>> {
+	const ret = await getDb(trx, table, id);
+	if (ret == null) throw new Error(`${table} ${id} doesn't exist`);
+	return ret;
+}
+
+export async function setDb<T extends keyof DatabaseData, Create extends boolean>(
+	trx: DBTransaction,
+	table: T,
+	id: Create extends true ? null : number,
+	newValue: Create extends true ? CrudRequest[T]["add"] : CrudRequest[T]["set"],
+): Promise<number> {
+	if (newValue == null) {
+		const deleted =
+			(await trx.deleteFrom(table satisfies keyof DatabaseData).where("id", "=", id)
+				.executeTakeFirstOrThrow()).numDeletedRows;
+		if (deleted == 0n) throw new Error(`Failed to delete ${id} from ${table}`);
+		return id as number;
 	}
+
+	const newValue2 = "data" in newValue
+		? { ...newValue, data: stringifyExtra(newValue.data) }
+		: newValue;
+	if (id == null) {
+		return (await trx.insertInto(table).returning("id").values(
+			newValue2 as Insertable<Database[CrudRequest[T]["which"]]>,
+		).executeTakeFirstOrThrow()).id;
+	} else {
+		await trx.updateTable(table satisfies keyof DatabaseData).where("id", "=", id).set(
+			newValue2 as Updateable<Database[CrudRequest[T]["which"]]>,
+		).execute();
+		return id;
+	}
+}
+
+export async function updateDb<T extends keyof DatabaseData>(
+	trx: DBTransaction,
+	table: T,
+	id: number,
+	update: CrudRequest[T]["update"],
+): Promise<void> {
+	const old = await getDb(trx, table, id);
+	if (!old) throw new Error(`${table} ${id} not found`);
+	await setDb(trx, table, id, await update(old));
 }

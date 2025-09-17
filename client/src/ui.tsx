@@ -1,7 +1,7 @@
 import { IconChevronDown, IconChevronUp, IconInfoCircleFilled, IconInfoTriangleFilled, IconLoader2,
 	IconX } from "@tabler/icons-preact";
-import { cloneElement, ComponentChild, ComponentChildren, ComponentProps, createContext, JSX, Ref,
-	RefObject, VNode } from "preact";
+import { cloneElement, ComponentChild, ComponentChildren, ComponentProps, createContext,
+	CSSProperties, HeadingHTMLAttributes, HTMLAttributes, JSX, Ref, RefObject, VNode } from "preact";
 import { ChangeEvent, createPortal, forwardRef } from "preact/compat";
 import { useCallback, useContext, useEffect, useErrorBoundary, useMemo, useRef,
 	useState } from "preact/hooks";
@@ -70,7 +70,8 @@ export type InputProps = {
 	icon?: ComponentChildren;
 	className?: string;
 	valueChange?: (x: string) => void;
-} & JSX.InputHTMLAttributes<HTMLInputElement>;
+} & JSX.IntrinsicHTMLElements["input"];
+
 export const Input = forwardRef<HTMLInputElement, InputProps>(
 	({ className, icon, onInput, valueChange, ...props }, ref) => {
 		const input = <input type="text"
@@ -101,7 +102,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
 );
 
 export function HiddenInput(
-	{ className, ...props }: JSX.InputHTMLAttributes<HTMLInputElement> & { className?: string },
+	{ className, ...props }: JSX.IntrinsicHTMLElements["input"] & { className?: string },
 ) {
 	return <input
 		className={twMerge(
@@ -162,10 +163,11 @@ export type ButtonProps = JSX.IntrinsicElements["button"] & {
 	iconRight?: ComponentChildren;
 	disabled?: boolean;
 	className?: string;
+	loading?: boolean;
 } & ShortcutsProps;
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-	({ className, icon, iconRight, ...props }, ref) => {
+	({ className, loading, icon, iconRight, ...props }, ref) => {
 		useShortcuts(props);
 		return <button ref={ref}
 			className={twMerge(
@@ -174,7 +176,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 					interactiveContainerDefault,
 				),
 				className,
-			)} {...props}>
+			)} disabled={loading == true} {...props}>
+			{loading == true && <ThemeSpinner />}
 			{icon}
 			{props.children}
 			{iconRight}
@@ -199,9 +202,7 @@ export const IconButton = (
 	</button>;
 };
 
-type AnchorProps = JSX.AnchorHTMLAttributes<HTMLAnchorElement> & ShortcutsProps & {
-	className?: string;
-};
+type AnchorProps = JSX.IntrinsicHTMLElements["a"] & ShortcutsProps & { className?: string };
 export const anchorHover =
 	"transition-all hover:text-black dark:hover:text-gray-50 hover:bg-cyan-100/5 enabled:cursor-pointer";
 export const anchorUnderline =
@@ -217,7 +218,7 @@ export const Anchor = forwardRef<HTMLAnchorElement, AnchorProps>(
 );
 
 export const LinkButton = (
-	{ className, icon, ...props }: JSX.AnchorHTMLAttributes<HTMLAnchorElement> & {
+	{ className, icon, ...props }: JSX.IntrinsicHTMLElements["a"] & {
 		icon?: ComponentChildren;
 		className?: string;
 	},
@@ -262,7 +263,7 @@ export const chipColors = {
 export const chipColorKeys = Object.keys(chipColors) as (keyof typeof chipColors)[];
 
 export const Chip = (
-	{ className, color, ...props }: JSX.HTMLAttributes<HTMLSpanElement> & {
+	{ className, color, ...props }: JSX.IntrinsicHTMLElements["span"] & {
 		color?: keyof typeof chipColors;
 		className?: string;
 	},
@@ -323,7 +324,7 @@ export const Divider = (
 		)} />;
 
 export const Card = (
-	{ className, children, ...props }: JSX.HTMLAttributes<HTMLDivElement> & { className?: string },
+	{ className, children, ...props }: HTMLAttributes<HTMLDivElement> & { className?: string },
 ) =>
 	<div
 		className={twMerge(
@@ -534,7 +535,7 @@ export const Collapse = forwardRef<
 
 	return <div ref={useCloneRef(ref, myRef)}
 		className={twMerge("overflow-hidden", className as string)}
-		style={{ ...style as JSX.CSSProperties, height: "1px" }} {...props}>
+		style={{ ...style as CSSProperties, height: "1px" }} {...props}>
 		<div ref={innerRef}>{showInner && children}</div>
 	</div>;
 });
@@ -596,9 +597,9 @@ export function ShowMore(
 type TextVariants = "big" | "lg" | "md" | "dim" | "bold" | "normal" | "err" | "sm" | "smbold"
 	| "code";
 export function Text(
-	{ className, children, v, ...props }: JSX.HTMLAttributes<HTMLSpanElement> & JSX.HTMLAttributes<
+	{ className, children, v, ...props }: HTMLAttributes<HTMLSpanElement> & HeadingHTMLAttributes<
 		HTMLHeadingElement
-	> & JSX.HTMLAttributes<HTMLParagraphElement> & { v?: TextVariants; className?: string },
+	> & HTMLAttributes<HTMLParagraphElement> & { v?: TextVariants; className?: string },
 ) {
 	switch (v) {
 		case "big":
@@ -659,7 +660,7 @@ export function Text(
 	}
 }
 
-const ModalContext = createContext<null | RefObject<HTMLDialogElement>>(null);
+const ModalContext = createContext<null | RefObject<HTMLDialogElement | null>>(null);
 export const px = (x: number | undefined) => x != undefined ? `${x}px` : "";
 
 function ModalBackground({ className, bgClassName }: { className?: string; bgClassName?: string }) {
@@ -753,7 +754,7 @@ export function Modal(
 		title?: ComponentChildren;
 		children?: ComponentChildren;
 		className?: string;
-	} & JSX.HTMLAttributes<HTMLDialogElement>,
+	} & JSX.IntrinsicHTMLElements["dialog"],
 ) {
 	const modalRef = useRef<HTMLDialogElement>(null);
 	const [show, setShow] = useState(false);
@@ -848,7 +849,7 @@ export const AppTooltip = forwardRef(
 				disabled?: boolean;
 				className?: string;
 			}
-			& Omit<JSX.HTMLAttributes<HTMLDivElement>, "content">,
+			& Omit<HTMLAttributes<HTMLDivElement>, "content">,
 		ref,
 	) => {
 		const [open, setOpen] = useState<number>(0);
@@ -1136,7 +1137,7 @@ export function useToast() {
 
 export function Container(
 	{ children, className, ...props }: { children?: ComponentChildren; className?: string }
-		& JSX.HTMLAttributes<HTMLDivElement>,
+		& HTMLAttributes<HTMLDivElement>,
 ) {
 	const [count, setCount] = useState(0);
 	const incCount = useCallback(() => {
@@ -1215,10 +1216,7 @@ export function Container(
 		)}
 
 		<div
-			className={twMerge(
-				"dark font-body dark:text-gray-50 text-gray-950 min-h-dvh relative",
-				className,
-			)}
+			className={twMerge("font-body dark:text-gray-50 text-gray-950 min-h-dvh relative", className)}
 			{...props}>
 			{children}
 			<div className="bg-neutral-950 absolute left-0 top-0 bottom-0 right-0 -z-50" />
@@ -1558,12 +1556,15 @@ export function useValidity(
 } {
 	const db = useFnRef(() => debounce(200), []);
 
-	const [v, setV] = useState<{ editing: boolean; value: string | null }>({ editing: false, value });
+	const [v, setV] = useState<{ editing: boolean; value: string | null }>({
+		editing: false,
+		value: null,
+	});
 	const check = (elem: HTMLInputElement, editing: boolean) => {
 		if (elem.value != v.value || v.editing) setV({ editing, value: elem.value });
 		if (elem.checkValidity()) {
 			const txt = elem.value;
-			db.current!.call(() => {
+			db.current?.call(() => {
 				callback(txt);
 				if (!editing) setV({ editing: false, value: null });
 			});
