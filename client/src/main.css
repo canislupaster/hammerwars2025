@@ -5,26 +5,26 @@
 	--font-big: Oxanium;
 	--font-mono: "IBM Plex Sans";
 
---color-zinc-50:  #d0e6eb;
---color-zinc-100: #c0e1e7;
---color-zinc-150: #b6dce3;
---color-zinc-200: #add8e1;
---color-zinc-300: #81c1ce;
---color-zinc-400: #54a5b6;
---color-zinc-500: #3d8392;
---color-zinc-600: #425c61;
---color-zinc-700: #2f3c3e;
---color-zinc-800: #1a1c1c;
---color-zinc-850: #1f2628;
---color-zinc-900: #131313;
---color-zinc-950: #0d0e0e;
+  --color-zinc-50:  #d0e6eb;
+  --color-zinc-100: #c0e1e7;
+  --color-zinc-150: #b6dce3;
+  --color-zinc-200: #add8e1;
+  --color-zinc-300: #81c1ce;
+  --color-zinc-400: #54a5b6;
+  --color-zinc-500: #3f8f85;
+  --color-zinc-600: #343b3a;
+  --color-zinc-700: #2f3c3e;
+  --color-zinc-800: #1a1c1c;
+  --color-zinc-850: #1f2628;
+  --color-zinc-900: #131313;
+  --color-zinc-950: #0d0e0e;
     
   --color-neutral-950: #0a0a0a;
   --color-gray-100: #ebedec;
 }
 
-@custom-variant dark (&);
-@custom-variant theme (&);
+@custom-variant dark (&:is(html *));
+@custom-variant theme (&:is(html *));
 @custom-variant enabled (&:not(:disabled));
 @custom-variant valid (&:not(:invalid));
 
@@ -47,10 +47,34 @@ button:not(:disabled) {
 	cursor: pointer;
 }
 
+.anim-delay {
+  animation-delay: 100ms;
+}
+
+.block-anim {
+  position: absolute;
+  height: 90%;
+  aspect-ratio: 1/1;
+  background-color: white;
+  animation: block 0.4s ease-out both;
+}
+
+@keyframes block {
+  0% { left: -20%; opacity: 0; }
+  70% { left: 70%; opacity: 1 }
+  100% { left: 100%; opacity: 0; }
+}
+
 @theme {
   --animate-expand: expand 0.2s forwards;
-  --animate-fade-in: fade-in 1s forwards;
+  --animate-flip-in: flip-in 0.6s both;
+  --animate-fade-in: fade-in 1s both;
   --animate-fade-out: fade-out 1s forwards;
+
+  @keyframes flip-in {
+    0% { transform: rotateX(80deg) scale(0.9); }
+    100% { transform: rotateX(0deg) scale(1); }
+  }
 
   @keyframes fade-in {
     0% { opacity: 0; }

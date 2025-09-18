@@ -24,3 +24,5 @@ dist-ssr
 
 .deployenv
 *.tsbuildinfo
+
+.env

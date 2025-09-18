@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import { API, APIError, parseExtra, ServerResponse, Session,
-	stringifyExtra } from "../../shared/util";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { API, APIClient, APIError, APIRequest, APIRequestParameters, parseExtra, ServerResponse,
+	Session, stringifyExtra } from "../../shared/util";
 
 export type LocalStorage = Partial<{ session: Session }> & { toJSON(): unknown };
 const localStorageKeys: (Exclude<keyof LocalStorage, "toJSON">)[] = ["session"];
@@ -21,55 +21,31 @@ for (const k of localStorageKeys) {
 	});
 }
 
-type APIRequest<T extends keyof API> = API[T] extends { request: unknown } ? [API[T]["request"]]
-	: [];
-export type APIRequestParameters = {
-	[K in keyof API]: [K, ...APIRequest<K>] | [
-		K,
-		...APIRequest<K>,
-		(resp: ServerResponse<K>) => void,
-	];
-};
-
 export const apiBaseUrl = new URL("/api/", import.meta.env["VITE_ROOT_URL"] as string).href;
-
 console.log(`api base url: ${apiBaseUrl}`);
 
-export async function makeRequest<T extends keyof API>(...args: APIRequestParameters[T]) {
-	const session = LocalStorage.session;
-	const resp = await fetch(new URL(args[0], apiBaseUrl), {
-		headers: {
-			"Content-Type": "application/json",
-			...session ? { Authorization: `Basic ${session.id} ${session.key}` } : {},
-		},
-		body: typeof args[1] == "function" ? undefined : stringifyExtra(args[1]),
-		credentials: import.meta.env.DEV ? "include" : "same-origin",
-		method: "POST",
-	});
+export const apiClient = new APIClient(apiBaseUrl, {
+	session: LocalStorage.session ?? null,
+	apiKey: null,
+	onSessionChange: x => {
+		LocalStorage.session = x ?? undefined;
+	},
+});
 
-	const data = parseExtra(await resp.text()) as ServerResponse<T>;
-	if (typeof args[args.length-1] == "function") {
-		(args[args.length-1] as (resp: ServerResponse<T>) => void)(data);
-	}
-	if (data.type == "error") {
-		throw new APIError(data.error);
-	}
-	return data.data;
-}
-type CurrentRequest<T extends keyof API> = {
-	current: ServerResponse<T>;
+type CurrentRequest<T extends keyof API, Throw extends boolean> = {
+	current: Throw extends true ? (ServerResponse<T> & { type: "ok" }) : ServerResponse<T>;
 	request: API[T] extends { request: unknown } ? API[T]["request"] : null;
 } | { current: null; request: null };
 
-export function useRequest<T extends keyof API>(
-	{ route, initRequest, handler, noThrow }: {
+export function useRequest<T extends keyof API, Throw extends boolean = true>(
+	{ route, initRequest, handler, throw: doThrow }: {
 		route: T;
 		initRequest?: API[T] extends { request: unknown } ? API[T]["request"] : true;
-		handler?: (resp: ServerResponse<T>) => void;
-		noThrow?: boolean;
+		handler?: (resp: NonNullable<CurrentRequest<T, Throw>["current"]>) => void;
+		throw?: Throw;
 	},
 ): Readonly<
-	CurrentRequest<T> & {
+	CurrentRequest<T, Throw> & {
 		loading: boolean;
 		call: (...params: APIRequest<T>) => void;
 		reset: () => void;
@@ -77,40 +53,63 @@ export function useRequest<T extends keyof API>(
 > {
 	const [err, setErr] = useState<unknown>(null);
 	const [loading, setLoading] = useState(0);
-	const [current, setCurrent] = useState<CurrentRequest<T>>({ current: null, request: null });
+	const [current, setCurrent] = useState<CurrentRequest<T, Throw>>({
+		current: null,
+		request: null,
+	});
 	const handlerRef = useRef(handler);
 	useEffect(() => {
 		handlerRef.current = handler;
 	}, [handler]);
 	const call = useCallback((...params: APIRequest<T>) => {
 		setLoading(i => i+1);
-		makeRequest<T>(
-			...[route, ...params, (res: ServerResponse<T>) => {
-				setCurrent({
-					current: res,
-					request: (params.length > 0 ? params[0] : null) as unknown as CurrentRequest<
-						T
-					>["request"],
-				});
-				handlerRef.current?.(res);
-			}] as unknown as APIRequestParameters[T],
-		).catch(setErr).finally(() => setLoading(i => i-1));
-	}, [route]);
+		const request = (params.length > 0 ? params[0] : null) as unknown as CurrentRequest<
+			T,
+			Throw
+		>["request"];
+		apiClient.request<T>(...[route, ...params] as unknown as APIRequestParameters[T]).then(v => {
+			const current: ServerResponse<T> & { type: "ok" } = { type: "ok", data: v };
+			setCurrent({ current, request });
+			handlerRef.current?.(current);
+		}).catch(err => {
+			let resp: ServerResponse<T>;
+			if (err instanceof APIError) resp = { type: "error", error: err.error };
+			else {
+				resp = {
+					type: "error",
+					error: {
+						type: "fetch",
+						msg: err instanceof Error ? err.message : "Error fetching from API",
+						status: 400,
+					},
+				};
+			}
+
+			if (doThrow == false) {
+				const current = resp as unknown as NonNullable<CurrentRequest<T, Throw>["current"]>;
+				handlerRef.current?.(current);
+				setCurrent({ current, request });
+			} else {
+				setErr(err);
+			}
+		}).finally(() => setLoading(i => i-1));
+	}, [doThrow, route]);
 	useEffect(() => {
 		if (initRequest != undefined) {
 			call(...(initRequest == true ? [] : [initRequest]) as APIRequest<T>);
 		}
 	}, [call, initRequest, route]);
 	useEffect(() => {
-		if (err instanceof Error && noThrow != true) throw err;
-	}, [err, noThrow]);
-	return {
-		...current,
-		loading: loading > 0,
+		if (err instanceof Error) throw err;
+	}, [err]);
+	const reset = useCallback(() => {
+		setErr(null);
+		setCurrent({ current: null, request: null });
+	}, []);
+	return useMemo(() => ({ ...current, loading: loading > 0, call, reset } as const), [
 		call,
-		reset: useCallback(() => {
-			setErr(null);
-			setCurrent({ current: null, request: null });
-		}, []),
-	} as const;
+		current,
+		loading,
+		reset,
+	]);
 }

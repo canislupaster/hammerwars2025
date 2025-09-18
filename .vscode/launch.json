@@ -10,6 +10,16 @@
 			"runtimeExecutable": "tsx",
 			"envFile": "${workspaceFolder}/server/.env",
 			"console": "integratedTerminal"
+		},
+		{
+			"request": "launch",
+			"name": "Manage",
+			"type": "node",
+			"program": "${workspaceFolder}/scripts/manage.ts",
+			"cwd": "${workspaceFolder}/scripts",
+			"runtimeExecutable": "tsx",
+			"envFile": "${workspaceFolder}/scripts/.env",
+			"console": "integratedTerminal"
 		}
 	]
 }

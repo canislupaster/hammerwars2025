@@ -1,24 +1,26 @@
 import Database from "better-sqlite3";
 import { GeneratedAlways, Insertable, Kysely, Migration, MigrationProvider, Migrator, Selectable,
 	sql, SqliteDialect, Transaction, Updateable } from "kysely";
-import { parseExtra, stringifyExtra, UserInfo } from "../shared/util.ts";
+import { ContestProperties, parseExtra, PartialUserInfo, stringifyExtra,
+	UserInfo } from "../shared/util.ts";
 
 type Database = {
-	team: {
+	team: { id: GeneratedAlways<number>; joinCode: string; name: string };
+	teamLogo: {
 		id: GeneratedAlways<number>;
-		joinCode: string;
-		name: string;
+		team: number;
 		logo: Buffer | null;
 		logoMime: string | null;
 	};
 	emailVerification: { id: GeneratedAlways<number>; key: string; email: string };
 	user: { id: GeneratedAlways<number>; team: number | null; email: string; data: string };
+	resume: { id: GeneratedAlways<number>; user: number; file: Buffer };
 	session: { id: GeneratedAlways<number>; created: number; key: string; user: number };
 	properties: { key: string; value: string };
 };
 
 export type UserData = {
-	info: Partial<UserInfo>;
+	info: PartialUserInfo;
 	submitted: UserInfo | null;
 	lastEdited: number;
 	passwordSalt: string;
@@ -27,6 +29,8 @@ export type UserData = {
 
 type DatabaseData = {
 	team: Database["team"];
+	teamLogo: Database["teamLogo"];
+	resume: Database["resume"];
 	user: Omit<Database["user"], "data"> & { data: UserData };
 	session: Database["session"];
 	emailVerification: Database["emailVerification"];
@@ -50,11 +54,8 @@ const migrator = new Migrator({
 					async up(db) {
 						await db.schema.createTable("team").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("name", "text", c =>
-								c.notNull()).addColumn("logo", "blob").addColumn("logoMime", "text").addColumn(
-								"joinCode",
-								"text",
-								c => c.notNull(),
-							).execute();
+								c.notNull()).addColumn("joinCode", "text", c =>
+								c.notNull()).execute();
 						await db.schema.createTable("emailVerification").addColumn("id", "integer", c =>
 							c.primaryKey().autoIncrement()).addColumn("key", "text", c =>
 								c.notNull()).addColumn("email", "text", c =>
@@ -64,11 +65,20 @@ const migrator = new Migrator({
 								col.references("team.id").onDelete("set null")).addColumn("email", "text", c =>
 								c.notNull().unique()).addColumn("data", "json", col =>
 								col.notNull()).execute();
+						await db.schema.createTable("teamLogo").addColumn("id", "integer", col =>
+							col.primaryKey().autoIncrement()).addColumn("team", "integer", col =>
+								col.notNull().references("team.id").unique()).addColumn("logo", "blob", c =>
+								c.notNull()).addColumn("logoMime", "text", c =>
+								c.notNull()).execute();
+						await db.schema.createTable("resume").addColumn("id", "integer", col =>
+							col.primaryKey().autoIncrement()).addColumn("user", "integer", col =>
+								col.notNull().references("user.id").unique()).addColumn("file", "blob", col =>
+								col.notNull()).execute();
 						await db.schema.createTable("session").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("created", "integer", c =>
 								c.notNull()).addColumn("key", "text", c =>
 								c.notNull()).addColumn("user", "integer", c =>
-								c.references("user.id")).execute();
+								c.references("user.id").onDelete("cascade")).execute();
 						await db.schema.createTable("properties").addColumn("key", "text", c =>
 							c.primaryKey().notNull()).addColumn("value", "json", c =>
 								c.notNull()).execute();
@@ -178,4 +188,34 @@ export async function updateDb<T extends keyof DatabaseData>(
 	const old = await getDb(trx, table, id);
 	if (!old) throw new Error(`${table} ${id} not found`);
 	await setDb(trx, table, id, await update(old));
+}
+
+export async function getProperty<T extends keyof ContestProperties>(
+	trx: DBTransaction,
+	prop: T,
+): Promise<ContestProperties[T] | null> {
+	const row = await trx.selectFrom("properties").where("key", "=", prop).select("value")
+		.executeTakeFirst();
+	if (!row) return null;
+	return parseExtra(row.value) as ContestProperties[T];
+}
+
+export async function getProperties(trx: DBTransaction): Promise<Partial<ContestProperties>> {
+	const out: Partial<ContestProperties> = {};
+	const rows = await trx.selectFrom("properties").selectAll().execute();
+	for (const row of rows) {
+		out[row.key as keyof ContestProperties] = parseExtra(row.value) as never;
+	}
+	return out;
+}
+
+export async function setProperty<T extends keyof ContestProperties>(
+	trx: DBTransaction,
+	prop: T,
+	value: ContestProperties[T],
+) {
+	const valueStr = stringifyExtra(value);
+	await trx.insertInto("properties").values({ key: prop, value: valueStr }).onConflict(c =>
+		c.doUpdateSet({ value: valueStr })
+	).execute();
 }

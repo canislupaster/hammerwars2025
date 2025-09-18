@@ -2,18 +2,23 @@ import { SendEmailCommand, SESClient } from "@aws-sdk/client-ses";
 import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { Context, Hono } from "hono";
+import { Context as HonoContext, Hono } from "hono";
 import { ContentfulStatusCode } from "hono/utils/http-status";
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import { Readable } from "node:stream";
+import { OpenAI } from "openai";
 import z from "zod";
-import { API, APIError, fill, logoMaxSize, parseExtra, ServerResponse,
+import { API, APIError, ContestProperties, fill, logoMaxSize, maxPromptLength, parseExtra,
+	resumeMaxSize, ServerResponse, Session, shirtSizes, UserInfo, validDiscordRe,
 	validNameRe } from "../shared/util.ts";
-import { DBTransaction, getDb, getDbCheck, setDb, transaction, updateDb, UserData } from "./db.ts";
+import { DBTransaction, getDb, getDbCheck, getProperties, getProperty, setDb, setProperty,
+	transaction, updateDb, UserData } from "./db.ts";
 import { makeVerificationEmail } from "./email.ts";
 
-const app = new Hono();
+type HonoEnv = { Variables: { session?: "clear" | Session } };
+const app = new Hono<HonoEnv>();
+type Context = HonoContext<HonoEnv>;
 
 export function doHash(...pass: string[]) {
 	const h = createHash("SHA256");
@@ -55,8 +60,6 @@ type APIRouteParameters = {
 	};
 };
 
-const minuteMs = 60*1000;
-
 type APIRoute = {
 	[K in keyof API]: {
 		ratelimit?: { times: number; durationMs: number };
@@ -95,10 +98,13 @@ function makeRoute<K extends keyof API>(route: K, data: APIRoute[K]) {
 				c: Context,
 				request: typeof req,
 			) => Promise<APIRouteParameters[K]["output"]>)(c, req);
+
+		const session = c.get("session");
 		return c.json(
 			{
 				type: "ok",
 				data: (resp ?? null) as unknown as (ServerResponse<K> & { type: "ok" })["data"],
+				session,
 			} satisfies ServerResponse<K>,
 		);
 	});
@@ -108,17 +114,32 @@ app.use("*", serveStatic({ root: "../client/dist" }));
 
 const sessionExpireMs = 3600*1000*24*7;
 
+const apiKeys = {
+	admin: process.env.ADMIN_API_KEY != undefined ? doHash(process.env.ADMIN_API_KEY) : null,
+	client: process.env.CLIENT_API_KEY != undefined ? doHash(process.env.CLIENT_API_KEY) : null,
+};
+
+async function keyAuth(c: Context, admin?: boolean) {
+	const authHdr = c.req.header("Authorization");
+	if (authHdr == undefined) throw err("No auth header", "auth");
+	const bearerMatch = authHdr.match(/^Bearer (.+)$/);
+	if (bearerMatch == null) throw err("Invalid auth header", "auth");
+	const auth = doHash(bearerMatch[1]) == apiKeys.admin
+		|| (doHash(bearerMatch[1]) == apiKeys.client && admin != true);
+	if (!auth) throw err("Incorrect API key", "auth");
+}
+
 async function auth(c: Context): Promise<number> {
 	const authHdr = c.req.header("Authorization");
 	if (authHdr == undefined) throw err("no auth header", "auth");
-	const match = authHdr.match(/^Basic ([^ ]) (.+)$/);
-	if (match == null) throw err("invalid auth header");
+	const match = authHdr.match(/^Basic ([^ ]+) (.+)$/);
+	if (match == null) throw err("Invalid auth header", "auth");
 	const id = Number.parseInt(match[1]);
 	const ses = await transaction(trx => getDb(trx, "session", id));
 	if (ses == undefined) throw err("no session found", "auth");
 	if (Date.now() >= ses.created+sessionExpireMs) throw err("session expired", "auth");
-	if (ses.key == doHash(match[2])) return ses.user;
-	throw err("invalid session key", "auth");
+	if (ses.key != doHash(match[2])) throw err("invalid session key", "auth");
+	return ses.user;
 }
 
 app.onError((err, c) => {
@@ -140,17 +161,33 @@ app.onError((err, c) => {
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
+const inPersonSchema = z.object({
+	needTransportation: z.boolean(),
+	pizza: z.enum(["cheese", "pepperoni", "sausage", "none"]),
+	sandwich: z.enum([
+		"chickenBaconRancher",
+		"chipotleChickenAvoMelt",
+		"toastedGardenCaprese",
+		"baconTurkeyBravo",
+		"none",
+	]),
+	shirtSize: z.enum(shirtSizes),
+});
+const discordSchema = z.string().regex(new RegExp(validDiscordRe));
 const userInfoSchema = z.object({
 	name: nameSchema,
-	discord: nameSchema.nullable(),
-	inPerson: z.object({
-		needTransportation: z.boolean(),
-		pizza: z.enum(["cheese", "pepperoni", "sausage"]).nullable(),
-		sandwich: z.enum(["veggieWrap", "spicyChicken", "chicken"]).nullable(),
-	}).nullable(),
+	discord: discordSchema.nullable(),
+	inPerson: inPersonSchema.nullable(),
+});
+const partialUserInfoSchema = z.object({
+	name: nameSchema.optional(),
+	discord: discordSchema.nullable(),
+	inPerson: inPersonSchema.partial().and(z.object({ needTransportation: z.boolean() })).nullable(),
 });
 
 const sesClient = new SESClient({ region: process.env.AWS_REGION });
+const openai = new OpenAI();
+
 export const rootUrl = new URL(process.env.ROOT_URL!);
 
 makeRoute("register", {
@@ -180,9 +217,9 @@ makeRoute("register", {
 			const response = await sesClient.send(
 				new SendEmailCommand({
 					Destination: { ToAddresses: [req.email], CcAddresses: [], BccAddresses: [] },
-					Source: "noreply@mail.hammerwars.win",
+					Source: "noreply@email.purduecpu.com",
 					Message: {
-						Subject: { Charset: "UTF-8", Data: "Continue registering for HammerWars" },
+						Subject: { Charset: "UTF-8", Data: "HammerWars 2025: Finish setting up your account" },
 						Body: { Html: { Charset: "UTF-8", Data: makeVerificationEmail(url.href) } },
 					},
 				}),
@@ -204,7 +241,7 @@ makeRoute("checkEmailVerify", {
 	},
 });
 
-async function makeSession(trx: DBTransaction, userId: number) {
+async function makeSession(c: Context, trx: DBTransaction, userId: number) {
 	const sesKey = genKey();
 	const sesId = await setDb(trx, "session", null, {
 		user: userId,
@@ -212,12 +249,16 @@ async function makeSession(trx: DBTransaction, userId: number) {
 		key: doHash(sesKey),
 	});
 
-	return { id: sesId, key: sesKey };
+	c.set("session", { id: sesId, key: sesKey });
+}
+
+function removeSession(c: Context) {
+	c.set("session", "clear");
 }
 
 makeRoute("createAccount", {
 	validator: z.object({ id: z.number(), key: z.string(), password: passwordSchema }),
-	handler: async (_c, req) => {
+	handler: async (c, req) => {
 		return await transaction(async trx => {
 			const row = await trx.selectFrom("emailVerification").selectAll().where("id", "==", req.id)
 				.executeTakeFirst();
@@ -239,49 +280,53 @@ makeRoute("createAccount", {
 				);
 				userId = prevUser.id;
 			} else {
-				const data: UserData = { info: {}, submitted: null, lastEdited: Date.now(), ...saltHash };
+				const data: UserData = {
+					info: { inPerson: null, discord: null },
+					submitted: null,
+					lastEdited: Date.now(),
+					...saltHash,
+				};
 				userId = await setDb(trx, "user", null, { email: row.email, team: null, data });
 			}
 
-			const sesKey = genKey();
-			const sesId = await setDb(trx, "session", null, {
-				user: userId,
-				created: Date.now(),
-				key: doHash(sesKey),
-			});
-
-			return { id: sesId, key: sesKey };
+			await makeSession(c, trx, userId);
 		});
 	},
 });
 
 makeRoute("login", {
 	validator: z.object({ email: z.email(), password: passwordSchema }),
-	handler: async (_c, req) => {
+	handler: async (c, req) => {
 		return await transaction(async trx => {
 			const row = await trx.selectFrom("user").select("id").where("email", "=", req.email)
 				.executeTakeFirst();
 			if (!row) return "incorrect";
 			const u = await getDbCheck(trx, "user", row.id);
 			if (doHash(req.password, u.data.passwordSalt) != u.data.passwordHash) return "incorrect";
-			return await makeSession(trx, row.id);
+			await makeSession(c, trx, row.id);
+			return null;
 		});
 	},
 });
 
 makeRoute("setPassword", {
 	validator: z.object({ newPassword: passwordSchema }),
-	handler: async (_c, req) => {
-		const userId = await auth(_c);
-		await transaction(async trx => {
+	handler: async (c, req) => {
+		const userId = await auth(c);
+		const salt = genKey();
+		return await transaction(async trx => {
 			await updateDb(
 				trx,
 				"user",
 				userId,
-				async old => ({ ...old, data: { ...old.data, passwordHash: doHash(req.newPassword) } }),
+				async old => ({
+					...old,
+					data: { ...old.data, passwordHash: doHash(req.newPassword, salt), passwordSalt: salt },
+				}),
 			);
 
 			await trx.deleteFrom("session").where("user", "=", userId).execute();
+			await makeSession(c, trx, userId);
 		});
 	},
 });
@@ -292,19 +337,70 @@ makeRoute("checkSession", {
 	},
 });
 
+makeRoute("updateResume", {
+	validator: z.object({ type: z.literal("add"), base64: z.base64() }).or(
+		z.object({ type: z.literal("remove") }),
+	),
+	async handler(c, req) {
+		const userId = await auth(c);
+		await transaction(async trx => {
+			if ((await getDbCheck(trx, "user", userId)).data.submitted != null) {
+				throw err("You must unsubmit to modify your resume");
+			}
+
+			if (req.type == "add") {
+				const resume = Buffer.from(req.base64, "base64");
+				if (resume.byteLength > resumeMaxSize) {
+					throw err("resume is too large");
+				}
+				await trx.insertInto("resume").values({ user: userId, file: resume }).onConflict(c =>
+					c.doUpdateSet({ file: resume })
+				).execute();
+			} else if (req.type == "remove") {
+				await trx.deleteFrom("resume").where("user", "=", userId).execute();
+			}
+		});
+	},
+});
+
 makeRoute("updateInfo", {
-	validator: z.object({ info: userInfoSchema.partial(), submit: z.boolean() }),
+	validator: z.object({
+		info: partialUserInfoSchema,
+		resume: z.object({ type: z.literal("add"), base64: z.base64() }).or(
+			z.object({ type: z.literal("remove") }),
+		).optional(),
+		submit: z.boolean(),
+	}),
 	handler: async (c, req) => {
 		const userId = await auth(c);
 		await transaction(async trx =>
 			updateDb(trx, "user", userId, async old => {
-				let submitted = null;
+				if (old.data.submitted && req.submit) {
+					throw err("You must unsubmit to update your information");
+				}
+
+				let submitted: UserInfo | null = null;
 				if (req.submit) {
+					if (await getProperty(trx, "registrationOpen") != true) {
+						throw err("Registration is not open");
+					}
+					const ends = await getProperty(trx, "registrationEnds");
+					if (ends != null && Date.now() >= ends) {
+						throw err("Registration has ended");
+					}
 					const parsed = userInfoSchema.safeParse(req.info);
 					if (!parsed.success) throw err("Can't submit: not fully filled out");
+					if (parsed.data.inPerson) {
+						const hasResume = await trx.selectFrom("resume").where("user", "=", userId).select("id")
+							.executeTakeFirst();
+						if (hasResume == undefined) {
+							throw err("Can't submit: no resume provided for in-person participant");
+						}
+					}
 					submitted = parsed.data;
 				}
-				return { ...old, data: { ...old.data, info: req.info, submitted } };
+
+				return { ...old, data: { ...old.data, info: req.info, submitted, lastEdited: Date.now() } };
 			})
 		);
 	},
@@ -314,8 +410,15 @@ makeRoute("deleteUser", {
 	handler: async c => {
 		const userId = await auth(c);
 		await transaction(trx => setDb(trx, "user", userId, null));
+		removeSession(c);
 	},
 });
+
+async function setTeamLogo(trx: DBTransaction, team: number, logo: Buffer, logoMime: string) {
+	// dont upsert so id changes
+	await trx.deleteFrom("teamLogo").where("team", "=", team).execute();
+	await trx.insertInto("teamLogo").values({ logo: logo, logoMime, team }).execute();
+}
 
 makeRoute("setTeam", {
 	validator: z.object({
@@ -330,26 +433,27 @@ makeRoute("setTeam", {
 			const u = await getDb(trx, "user", userId);
 			if (u == null) throw err("user does not exist");
 
-			const logo = req.logo == undefined
-				? {}
-				: req.logo == "remove"
-				? { logo: null }
-				: { logo: Buffer.from(req.logo.base64, "base64"), logoMime: req.logo.mime };
-
-			if (logo.logo && logo.logo.byteLength > logoMaxSize) {
-				throw err(`team logo is too large (> ${logoMaxSize/1024} KB)`);
-			}
-
+			let teamId: number;
 			if (u.team != null) {
-				await setDb(trx, "team", u.team, { name: req.name, ...logo });
+				teamId = u.team;
+				await setDb(trx, "team", u.team, { name: req.name });
 			} else {
-				const teamId = await setDb(trx, "team", null, {
+				teamId = await setDb(trx, "team", null, {
 					joinCode: fill(10, () => randomInt(0, 9).toString()).join(""),
-					...logo,
 					name: req.name,
 				});
 
 				await setDb(trx, "user", userId, { team: teamId });
+			}
+
+			if (req.logo == "remove") {
+				await trx.deleteFrom("teamLogo").where("team", "=", teamId).execute();
+			} else if (req.logo != null) {
+				const logo = Buffer.from(req.logo.base64, "base64");
+				if (logo.byteLength > logoMaxSize) {
+					throw err(`team logo is too large`);
+				}
+				await setTeamLogo(trx, teamId, logo, req.logo.mime);
 			}
 		});
 	},
@@ -391,18 +495,23 @@ makeRoute("getInfo", {
 		const userId = await auth(c);
 		return await transaction(async trx => {
 			const { data, team } = await getDbCheck(trx, "user", userId);
+			const resume = await trx.selectFrom("resume").select("id").where("user", "=", userId)
+				.executeTakeFirst();
 			const data2 = {
 				info: data.info,
 				submitted: data.submitted != null,
 				lastEdited: data.lastEdited,
+				hasResume: resume != undefined,
 			};
 
 			if (team != null) {
 				const teamData = await getDbCheck(trx, "team", team);
+				const logo = await trx.selectFrom("teamLogo").select("teamLogo.id").where("team", "=", team)
+					.executeTakeFirst();
 				return {
 					...data2,
 					team: {
-						logo: teamData.logo != null ? `teamLogo/${teamData.id}` : null,
+						logo: logo != null ? `teamLogo/${logo.id}` : null,
 						joinCode: teamData.joinCode,
 						name: teamData.name,
 					},
@@ -414,11 +523,83 @@ makeRoute("getInfo", {
 	},
 });
 
+makeRoute("registrationWindow", {
+	async handler(_c) {
+		return await transaction(async trx => ({
+			open: await getProperty(trx, "registrationOpen") ?? false,
+			closes: await getProperty(trx, "registrationEnds"),
+		}));
+	},
+});
+
+makeRoute("getProperties", {
+	async handler(c) {
+		await keyAuth(c);
+		return await transaction(trx => getProperties(trx));
+	},
+});
+
+makeRoute("setProperties", {
+	validator: z.object({
+		registrationEnds: z.number(),
+		registrationOpen: z.boolean(),
+		internetAccessAllowed: z.boolean(),
+	}).partial().strip(),
+	async handler(c, req) {
+		await keyAuth(c);
+		await transaction(async trx => {
+			// zod strips unknown keys
+			for (const k in req) {
+				const contestKey = k as keyof ContestProperties;
+				if (req[contestKey] != undefined) {
+					await setProperty(trx, contestKey, req[contestKey]);
+				}
+			}
+		});
+	},
+});
+
+makeRoute("getResume", {
+	async handler(c) {
+		const uid = await auth(c);
+		const resumeData = await transaction(trx =>
+			trx.selectFrom("resume").where("user", "=", uid).select("file").executeTakeFirst()
+		);
+		if (!resumeData) throw err("Resume not uploaded");
+		// 💀 im so sorry
+		return resumeData.file.toString("base64");
+	},
+});
+
+makeRoute("generateLogo", {
+	validator: z.object({ prompt: z.string().max(maxPromptLength) }),
+	ratelimit: { times: 5, durationMs: 3600*1000 },
+	async handler(c, req) {
+		const userId = await auth(c);
+		const [teamId, teamName] = await transaction(async trx => {
+			const teamId = (await getDbCheck(trx, "user", userId)).team;
+			if (teamId == null) throw err("user not in a team");
+			return [teamId, (await getDbCheck(trx, "team", teamId)).name] as const;
+		});
+		const res = await openai.images.generate({
+			model: "gpt-image-1",
+			prompt:
+				`Create a team logo for a programming contest for a team named "${teamName}. It should work well on a black background. ${req.prompt}`,
+			quality: "medium",
+			output_format: "png",
+		});
+		const data = res.data?.[0]?.b64_json;
+		if (data == null) throw err("Image was not generated");
+		const logo = Buffer.from(data, "base64");
+		await transaction(trx => setTeamLogo(trx, teamId, logo, "image/png"));
+	},
+});
+
 app.get("/teamLogo/:id", async c => {
 	const id = c.req.param().id;
 	const idInt = Number.parseInt(id);
 	if (!isFinite(idInt)) throw err("invalid id");
-	const data = await transaction(trx => getDbCheck(trx, "team", idInt));
+	const data = await transaction(trx => getDbCheck(trx, "teamLogo", idInt));
 	if (!data.logo || data.logoMime == null) throw err("no logo for team");
 	return c.body(Readable.toWeb(Readable.from(data.logo)), 200, { "Content-Type": data.logoMime });
 });

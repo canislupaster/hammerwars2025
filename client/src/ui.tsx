@@ -3,7 +3,7 @@ import { IconChevronDown, IconChevronUp, IconInfoCircleFilled, IconInfoTriangleF
 import { cloneElement, ComponentChild, ComponentChildren, ComponentProps, createContext,
 	CSSProperties, HeadingHTMLAttributes, HTMLAttributes, JSX, Ref, RefObject, VNode } from "preact";
 import { ChangeEvent, createPortal, forwardRef } from "preact/compat";
-import { useCallback, useContext, useEffect, useErrorBoundary, useMemo, useRef,
+import { useCallback, useContext, useEffect, useErrorBoundary, useId, useMemo, useRef,
 	useState } from "preact/hooks";
 import { ArrowContainer, Popover, PopoverState } from "react-tiny-popover";
 import { twJoin, twMerge } from "tailwind-merge";
@@ -29,7 +29,7 @@ export const textColor = {
 
 export const bgColor = {
 	default: "dark:bg-zinc-800 bg-zinc-200 dark:disabled:bg-zinc-600",
-	md: "dark:bg-zinc-850 bg-zinc-150 dark:disabled:bg-zinc-600",
+	md: "dark:bg-neutral-900 dark:disabled:bg-neutral-800",
 	hover: "dark:hover:bg-zinc-750 hover:bg-zinc-150 transition-colors",
 	secondary: "dark:bg-zinc-900 bg-zinc-150",
 	green: "dark:enabled:bg-green-800 enabled:bg-green-400",
@@ -60,11 +60,11 @@ export const outlineColor = {
 };
 
 export const containerDefault =
-	`${textColor.default} ${bgColor.default} ${borderColor.default} border-[1.5px] rounded-xl`;
+	`${textColor.default} ${bgColor.default} ${borderColor.default} border-[1.5px] rounded-none`;
 export const invalidInputStyle =
 	`invalid:dark:bg-rose-900 invalid:bg-rose-400 invalid:theme:border-red-600 invalid:focus:theme:outline-red-600`;
 export const interactiveContainerDefault =
-	`${textColor.default} ${bgColor.default} ${borderColor.defaultInteractive} ${outlineColor.default} ${invalidInputStyle} border-[1.5px] rounded-xl`;
+	`${textColor.default} ${bgColor.default} ${borderColor.defaultInteractive} ${outlineColor.default} ${invalidInputStyle} border-[1.5px] rounded-none`;
 
 export type InputProps = {
 	icon?: ComponentChildren;
@@ -177,7 +177,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 				),
 				className,
 			)} disabled={loading == true} {...props}>
-			{loading == true && <ThemeSpinner />}
+			{loading == true && <ThemeSpinner size="sm" />}
 			{icon}
 			{props.children}
 			{iconRight}
@@ -225,7 +225,7 @@ export const LinkButton = (
 ) =>
 	<a
 		className={twMerge(
-			"flex flex-row gap-2 px-3 py-1.5 items-center rounded-xl text-sm",
+			"flex flex-row gap-2 px-3 py-1.5 items-center rounded-none text-sm",
 			interactiveContainerDefault,
 			className,
 		)}
@@ -270,7 +270,7 @@ export const Chip = (
 ) =>
 	<span
 		className={twMerge(
-			"inline-block text-xs px-2 py-1 rounded-xl border-solid border whitespace-nowrap",
+			"inline-block text-xs px-2 py-1 rounded-none border-solid border whitespace-nowrap",
 			chipColors[color ?? "gray"],
 			className,
 		)}
@@ -328,7 +328,7 @@ export const Card = (
 ) =>
 	<div
 		className={twMerge(
-			"flex flex-col gap-1 rounded-xl p-2 border-[1.5px] dark:border-zinc-600 shadow-md dark:shadow-black shadow-white/20 border-zinc-300",
+			"flex flex-col gap-1 rounded-none p-4 border-[1.5px] dark:border-zinc-700 shadow-md dark:shadow-black shadow-white/20 border-zinc-300",
 			bgColor.md,
 			className,
 		)}
@@ -629,7 +629,7 @@ export function Text(
 			</h3>;
 		case "lg":
 			return <h3
-				className={twMerge("text-xl font-big font-extrabold", textColor.contrast, className)}
+				className={twMerge("text-2xl font-big font-extrabold", textColor.contrast, className)}
 				{...props}>
 				{children}
 			</h3>;
@@ -715,7 +715,7 @@ function ModalBackground({ className, bgClassName }: { className?: string; bgCla
 		};
 	}, [modalCtx]);
 
-	return <div className={twMerge("-z-10 rounded-xl fixed overflow-clip border", className)}
+	return <div className={twMerge("-z-10 rounded-none fixed overflow-clip border", className)}
 		style={{
 			width: px(dims?.width),
 			height: px(dims?.height),
@@ -779,7 +779,7 @@ export function Modal(
 		update={setShow} ref={modalRef}>
 		<dialog
 			className={twMerge(
-				"bg-transparent opacity-0 [:not(.show)]:pointer-events-none transition-opacity duration-500 mx-auto md:mt-[15dvh] mt-10 text-inherit outline-none rounded-xl z-50 p-5 pt-4 container flex items-stretch flex-col max-h-[calc(min(50rem,70dvh))] overflow-auto fixed left-0 top-0 md:max-w-2xl right-0 gap-2 group [.show]:opacity-100 [.show]:pointer-events-auto",
+				"bg-transparent opacity-0 [:not(.show)]:pointer-events-none transition-opacity duration-500 mx-auto md:mt-[15dvh] mt-10 text-inherit outline-none rounded-none z-50 p-5 pt-4 container flex items-stretch flex-col max-h-[calc(min(50rem,70dvh))] overflow-auto fixed left-0 top-0 md:max-w-2xl right-0 gap-2 group [.show]:opacity-100 [.show]:pointer-events-auto",
 				className,
 			)}
 			onClose={ev => {
@@ -1092,11 +1092,12 @@ export function Select<T>(
 
 	const ctx = useContext(PopupCountCtx);
 	return <Dropdown noHover trigger={children != undefined ? children : <div>
-		<Button className={twMerge("pr-1 pl-1 py-0.5 min-w-0 gap-0", className)} disabled={disabled}>
-			<div className="basis-16 grow whitespace-nowrap overflow-hidden max-w-24">
+		<Button className={twMerge("pr-2 pl-2 py-1 min-w-0 gap-1", className)} disabled={disabled}
+			type="button">
+			<div className="basis-16 grow whitespace-nowrap overflow-hidden max-w-xs">
 				{curOpt == undefined ? placeholder : curOpt.label}
 			</div>
-			<IconChevronDown size={36} />
+			<IconChevronDown size={24} />
 		</Button>
 	</div>}
 		parts={[
@@ -1114,8 +1115,8 @@ export function Select<T>(
 					} as const,
 				],
 			...parts,
-		]} onOpenChange={() => setSearch("")} className={children != undefined ? className : undefined}
-		{...props} />;
+		]} onOpenChange={() => setSearch("")}
+		className={twMerge("w-fit", children != undefined && className)} {...props} />;
 }
 
 export type Theme = "light" | "dark";
@@ -1610,4 +1611,116 @@ export function FadeRoute(
 	}, [ctx]);
 
 	return <div {...props} className={twMerge("animate-fade-in w-full", className)} ref={ref} />;
+}
+
+export function Checkbox(
+	{ label, checked, valueChange, disabled, className }: {
+		label?: ComponentChildren;
+		checked?: boolean;
+		valueChange?: (value: boolean) => void;
+		disabled?: boolean;
+		className?: string;
+	},
+) {
+	const id = useId();
+	return <label htmlFor={id}
+		className={[
+			"group inline-flex items-center gap-3 select-none",
+			disabled == true ? "opacity-60 cursor-not-allowed" : "cursor-pointer",
+		].join(" ")}>
+		<input id={id} type="checkbox" className="peer sr-only" checked={checked}
+			onChange={e => valueChange?.(e.currentTarget.checked)} disabled={disabled} />
+		<span aria-hidden
+			className={twMerge(
+				interactiveContainerDefault,
+				"valid:peer-focus:border-blue-500 peer-focus:outline relative h-6 aspect-square",
+				className,
+			)}>
+			<span
+				className={twJoin(
+					"absolute top-[20%] left-[20%] transition-transform w-[60%] h-[60%] bg-neutral-100",
+					checked == true ? "scale-100" : "scale-0",
+				)} />
+		</span>
+		{label != undefined && <Text>{label}</Text>}
+	</label>;
+}
+
+export function Countdown({ until }: { until: number }) {
+	const [time, setTime] = useState<null | number>(null);
+	useEffect(() => {
+		let curTimeout: number | null = null;
+		const untilNext = () => {
+			const nxt = 1001-(Date.now()%1000); // should be strictly in the next second... 1ms delay
+			setTime(Math.floor(until-Date.now()/1000));
+			curTimeout = setTimeout(untilNext, nxt);
+		};
+
+		untilNext();
+		return () => {
+			if (curTimeout != null) clearTimeout(curTimeout);
+		};
+	}, [until]);
+
+	if (time == null || time < 0) return [];
+	const day = Math.floor(time/(3600*24)),
+		hr = Math.floor(time/3600)%24,
+		min = Math.floor(time/60)%60,
+		sec = time%60;
+
+	return ([[day, "Day"], [hr, "Hour"], [min, "Minute"], [sec, "Second"]] satisfies [
+		number,
+		string,
+	][]).map(([qty, name], i) =>
+		<div className="flex flex-col gap-1 items-center justify-between" key={name}>
+			<div className={twJoin(chipColors[chipColorKeys[i]], "p-2 px-3 rounded-md shadow-md")}>
+				<Text v="md">{qty < 10 ? `0${qty}` : qty}</Text>
+			</div>
+			<Text v="sm">{name}{qty != 1 ? "s" : ""}</Text>
+		</div>
+	);
+}
+
+export function FileInput(
+	{ onUpload, maxSize, mimeTypes, children, ...props }: {
+		onUpload: (x: File) => void;
+		maxSize?: number;
+		mimeTypes?: readonly string[];
+	} & ButtonProps,
+) {
+	const [err, setErr] = useState<string | null>(null);
+	const id = useId();
+	const ref = useRef<HTMLInputElement>(null);
+	return <div className="flex flex-col gap-1 items-stretch">
+		<label htmlFor={id}>
+			<Button type="button" {...props} onClick={() => {
+				ref.current!.click();
+			}}>
+				{children ?? "Choose file"}
+			</Button>
+		</label>
+		<input id={id} ref={ref} accept={mimeTypes?.join(",")} type="file" className="sr-only"
+			onInput={ev => {
+				let err: string | null = null;
+				if (ev.currentTarget.files && ev.currentTarget.files.length > 0) {
+					const file = ev.currentTarget.files?.[0];
+					if (maxSize != undefined && file.size > maxSize) {
+						err = `File is > ${Math.floor(maxSize/1024)} KB, please choose something smaller`;
+					} else if (mimeTypes != undefined && !mimeTypes.includes(file.type)) {
+						err = `File should be ${mimeTypes.join(" or ")}, not ${file.type}.`;
+					} else {
+						onUpload(file);
+					}
+				}
+
+				if (err == null) {
+					setErr(null);
+					ev.currentTarget.setCustomValidity("");
+				} else {
+					setErr(err);
+					ev.currentTarget.setCustomValidity(err);
+				}
+			}} />
+		{err != null && <Alert title="Invalid file" txt={err} />}
+	</div>;
 }
