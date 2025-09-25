@@ -1,13 +1,17 @@
+import { IconClipboard, IconDice } from "@tabler/icons-preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { twJoin } from "tailwind-merge";
+import { randomShirtSeed } from "../../shared/genshirt";
 import { API, joinCodeRe, logoMaxSize, logoMimeTypes, maxPromptLength, PartialUserInfo,
 	resumeMaxSize, ServerResponse, shirtSizes, UserInfo, validDiscordRe,
 	validNameRe } from "../../shared/util";
 import { apiBaseUrl, apiClient, useRequest } from "./clientutil";
+import type { GenShirtMessage, GenShirtResponse } from "./genshirtworker";
+import GenShirtWorker from "./genShirtWorker?worker";
 import { MainContainer } from "./main";
-import { Alert, Anchor, AppTooltip, bgColor, borderColor, Button, Card, Checkbox, Countdown,
-	Divider, FileInput, Input, Loading, Modal, Select, Text, Textarea, useGoto,
-	useValidity } from "./ui";
+import { Alert, Anchor, AppTooltip, bgColor, borderColor, Button, Card, Checkbox, Collapse,
+	Countdown, Divider, FileInput, IconButton, Input, Loading, Modal, Select, Text, Textarea,
+	ThemeSpinner, useDebounce, useGoto, useToast, useValidity } from "./ui";
 
 const toBase64 = (file: File) =>
 	new Promise<string>((res, rej) => {
@@ -60,6 +64,84 @@ function GenerateTeamLogo({ refresh }: { refresh: () => void }) {
 			Generate logo
 		</Button>
 	</>;
+}
+
+export function ShirtPreview(
+	{ info, setSeed, setHue }: {
+		info: Pick<API["getInfo"]["response"] & { type: "ok" }, "info" | "team">;
+		setSeed: (x: number) => void;
+		setHue: (x: number) => void;
+	},
+) {
+	const name = info.info.name,
+		team = info.team?.name,
+		teamLogo = info.team?.logo,
+		seed = info.info.shirtSeed,
+		hue = info.info.shirtHue;
+
+	const [res, setRes] = useState<GenShirtResponse | null>(null);
+	const canvasRef = useRef<HTMLCanvasElement>(null);
+
+	const db = useDebounce(200);
+	useEffect(() => {
+		if (!db) return;
+		setRes(null);
+		const worker = new GenShirtWorker();
+		db.call(() => {
+			worker.postMessage(
+				{
+					name: name ?? "",
+					team: team ?? "",
+					quality: "low",
+					hue,
+					logo: teamLogo != undefined ? new URL(teamLogo, apiBaseUrl).href : undefined,
+					seed,
+				} satisfies GenShirtMessage,
+			);
+		});
+
+		worker.onmessage = msg => {
+			const resp = msg.data as GenShirtResponse;
+			setRes(resp);
+			if (resp.type == "success") {
+				const canvas = canvasRef.current;
+				const ctx = canvas?.getContext("2d");
+				if (ctx && canvas) {
+					canvas.width = resp.data.width;
+					canvas.height = resp.data.height;
+					ctx.putImageData(resp.data, 0, 0);
+				}
+			}
+		};
+
+		return () => worker.terminate();
+	}, [db, hue, name, seed, team, teamLogo]);
+
+	return <div className="flex flex-col gap-1 w-full">
+		<Text v="md">Shirt preview</Text>
+		<Button type="button" onClick={() => {
+			setSeed(randomShirtSeed());
+		}} icon={<IconDice />}>
+			Randomize seed
+		</Button>
+
+		<div className="flex flex-row gap-2 w-full mt-1">
+			<Text>Hue</Text>
+			<input value={hue} onInput={ev => setHue(ev.currentTarget.valueAsNumber)} type="range" min={0}
+				max={360} className="grow" />
+		</div>
+
+		<Collapse className="self-center">
+			<div hidden={res?.type == "error"} className="max-w-md m-3 bg-black p-3 flex flex-col">
+				{res == null && <Loading>
+					<Text>Generating shirt...</Text>
+				</Loading>}
+				<canvas hidden={res == null} ref={canvasRef} className="max-w-full h-auto" />
+			</div>
+
+			{res?.type == "error" && <Alert bad title="Error generating shirt" txt={res.msg} />}
+		</Collapse>
+	</div>;
 }
 
 export function RegistrationEditor() {
@@ -155,7 +237,7 @@ export function RegistrationEditor() {
 
 	const loading = info.loading || updateInfo.loading || updateTeam.loading || leaveTeam.loading
 		|| joinTeam.loading || changePassword.loading || updateResume.loading;
-	const team = data?.team;
+	const team = data?.team ?? null;
 
 	const [hasClosed, setHasClosed] = useState<boolean | null>(null);
 	useEffect(() => {
@@ -191,6 +273,8 @@ export function RegistrationEditor() {
 		&& <Alert bad title={`${name} is required`} txt="Please specify it before submitting." />;
 	const anyMissing = Object.values(missing).some(x => x);
 
+	const toast = useToast();
+
 	if (data == null || userInfo == null || window.current == null || hasClosed == null) {
 		return <Loading />;
 	}
@@ -198,7 +282,7 @@ export function RegistrationEditor() {
 	const registrationClosed = !window.current.data.open || hasClosed;
 
 	const modInfo = <K extends keyof PartialUserInfo>(key: K, newV: PartialUserInfo[K]) => {
-		setUserInfo({ ...userInfo, [key]: newV });
+		if (!loading) setUserInfo({ ...userInfo, [key]: newV });
 	};
 
 	const modInPerson = <K extends keyof NonNullable<PartialUserInfo["inPerson"]>>(
@@ -328,6 +412,12 @@ export function RegistrationEditor() {
 									setValue={v => modInPerson("shirtSize", v == "unset" ? undefined : v)} />
 								{makeMissingAlert("shirtSize", "Shirt size")}
 							</div>
+
+							<ShirtPreview info={{ info: userInfo, team }} setSeed={s => {
+								modInfo("shirtSeed", s);
+							}} setHue={h => {
+								modInfo("shirtHue", h);
+							}} />
 						</div>)}
 				</div>
 				{data.submitted
@@ -396,10 +486,11 @@ export function RegistrationEditor() {
 				? <div className="flex flex-col gap-3 max-w-xl">
 					<div className="flex flex-col gap-1">
 						<Text>Team name</Text>
-						<Input disabled={loading} {...teamNameValidity} pattern={validNameRe} onBlur={ev => {
-							teamNameValidity.onBlur(ev);
-							if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
-						}} />
+						<Input disabled={loading} required {...teamNameValidity} pattern={validNameRe}
+							onBlur={ev => {
+								teamNameValidity.onBlur(ev);
+								if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
+							}} />
 					</div>
 
 					{team.logo == null
@@ -414,6 +505,9 @@ export function RegistrationEditor() {
 						</div>}
 
 					<Text v="bold" className="-mb-2">Upload logo</Text>
+					<Text className="-mb-1">
+						Your image will be cropped to fit in a square. (Ideally, you should use a square image.)
+					</Text>
 					<div className="flex flex-row gap-2">
 						<FileInput maxSize={logoMaxSize} mimeTypes={logoMimeTypes} onUpload={file => {
 							void toBase64(file).then(base64 =>
@@ -424,6 +518,18 @@ export function RegistrationEditor() {
 							);
 						}} />
 						<GenerateTeamLogo refresh={infoCall} />
+					</div>
+
+					<Text v="bold" className="-mb-2">Join code</Text>
+					<div className="flex flex-row gap-2 items-stretch">
+						<Input readonly value={team.joinCode} onFocus={ev => {
+							ev.currentTarget.setSelectionRange(0, ev.currentTarget.value.length);
+						}} />
+						<IconButton icon={IconClipboard} onClick={() => {
+							void navigator.clipboard.writeText(team.joinCode).then(() =>
+								toast("Join code copied")
+							);
+						}} className="h-auto" />
 					</div>
 
 					<Button loading={loading} className="mt-5 w-fit" onClick={() => {

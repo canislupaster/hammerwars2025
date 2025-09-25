@@ -1,7 +1,8 @@
 import { IconChevronDown, IconChevronUp, IconInfoCircleFilled, IconInfoTriangleFilled, IconLoader2,
-	IconX } from "@tabler/icons-preact";
-import { cloneElement, ComponentChild, ComponentChildren, ComponentProps, createContext,
-	CSSProperties, HeadingHTMLAttributes, HTMLAttributes, JSX, Ref, RefObject, VNode } from "preact";
+	IconProps, IconX } from "@tabler/icons-preact";
+import { cloneElement, ComponentChild, ComponentChildren, ComponentProps, ComponentType,
+	createContext, createElement, CSSProperties, FunctionComponent, h, HeadingHTMLAttributes,
+	HTMLAttributes, JSX, Ref, RefObject, VNode } from "preact";
 import { ChangeEvent, createPortal, forwardRef } from "preact/compat";
 import { useCallback, useContext, useEffect, useErrorBoundary, useId, useMemo, useRef,
 	useState } from "preact/hooks";
@@ -50,7 +51,7 @@ export const borderColor = {
 	divider: "dark:border-gray-600 border-zinc-300",
 	red: "border-red-400 dark:border-red-600",
 	defaultInteractive:
-		"border-zinc-300 hover:border-zinc-400 dark:border-zinc-600 dark:hover:border-zinc-500 disabled:bg-zinc-300 aria-expanded:border-blue-500 active:border-blue-500 dark:active:border-blue-500 data-[selected=true]:border-blue-500",
+		"border-zinc-300 hover:border-zinc-400 dark:border-zinc-600 dark:hover:border-zinc-500 disabled:bg-zinc-300 aria-expanded:border-blue-500 active:border-blue-500 dark:active:border-blue-500 data-[selected=true]:border-blue-500 transition-colors",
 	blue: `hover:border-blue-500 dark:hover:border-blue-500 border-blue-500 dark:border-blue-500`,
 	focus: `valid:focus:border-blue-500 valid:dark:focus:border-blue-500 focus:outline`,
 };
@@ -62,7 +63,7 @@ export const outlineColor = {
 export const containerDefault =
 	`${textColor.default} ${bgColor.default} ${borderColor.default} border-[1.5px] rounded-none`;
 export const invalidInputStyle =
-	`invalid:dark:bg-rose-900 invalid:bg-rose-400 invalid:theme:border-red-600 invalid:focus:theme:outline-red-600`;
+	`bad:dark:bg-rose-900 bad:bg-rose-400 bad:theme:border-red-600 bad:focus:theme:outline-red-600`;
 export const interactiveContainerDefault =
 	`${textColor.default} ${bgColor.default} ${borderColor.defaultInteractive} ${outlineColor.default} ${invalidInputStyle} border-[1.5px] rounded-none`;
 
@@ -74,7 +75,7 @@ export type InputProps = {
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
 	({ className, icon, onInput, valueChange, ...props }, ref) => {
-		const input = <input type="text"
+		const input = <input placeholder=" " type="text"
 			className={twMerge(
 				"w-full p-2 transition duration-300",
 				icon != undefined && "pl-11",
@@ -104,13 +105,12 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
 export function HiddenInput(
 	{ className, ...props }: JSX.IntrinsicHTMLElements["input"] & { className?: string },
 ) {
-	return <input
+	return <input placeholder=" "
 		className={twMerge(
-			"bg-transparent border-0 outline-none border-b-2 focus:outline-none valid:focus:theme:border-blue-500 invalid:theme:border-red-600 transition duration-300 px-1 py-px pb-0.5 h-fit",
+			"bg-transparent border-0 outline-none border-b-2 focus:outline-none valid:focus:theme:border-blue-500 bad:theme:border-red-600 transition duration-300 px-1 py-px pb-0.5 h-fit",
 			borderColor.default,
 			className,
-		)}
-		{...props} />;
+		)} {...props} />;
 }
 
 export function Textarea(
@@ -186,7 +186,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 );
 
 export const IconButton = (
-	{ className, children, icon, ...props }: { icon?: ComponentChildren; className?: string }
+	{ className, children, icon, ...props }: { icon: ComponentType<IconProps>; className?: string }
 		& ShortcutsProps & JSX.IntrinsicElements["button"],
 ) => {
 	useShortcuts(props);
@@ -197,7 +197,7 @@ export const IconButton = (
 			className,
 		)}
 		{...props}>
-		{icon}
+		{createElement(icon, { size: 24 })}
 		{children}
 	</button>;
 };
@@ -246,9 +246,12 @@ export const ThemeSpinner = (
 			className,
 		)} />;
 
-export const Loading = (props: ComponentProps<typeof ThemeSpinner>) =>
-	<div className="h-full w-full flex item-center justify-center py-16 px-20">
+export const Loading = (
+	{ children, ...props }: ComponentProps<typeof ThemeSpinner> & { children?: ComponentChildren },
+) =>
+	<div className="h-full w-full flex flex-col items-center justify-center py-16 px-20 gap-3">
 		<ThemeSpinner size="lg" {...props} />
+		{children}
 	</div>;
 
 export const chipColors = {
@@ -319,7 +322,7 @@ export const Divider = (
 		className={twMerge(
 			"shrink-0 block",
 			vert == true ? "w-px h-5 self-center pb-1" : "w-full h-px my-2",
-			contrast ?? false ? "dark:bg-gray-400 bg-gray-500" : bgColor.divider,
+			contrast ?? false ? "dark:bg-gray-300 bg-gray-500" : bgColor.divider,
 			className,
 		)} />;
 
@@ -789,7 +792,7 @@ export function Modal(
 			{...props}>
 			<ModalContext.Provider value={modalRef}>
 				{onClose && closeButton != false
-					&& <IconButton icon={<IconX />}
+					&& <IconButton icon={IconX}
 						className={twJoin("absolute top-3 right-2 z-30", transparentNoHover)} onClick={() =>
 						onClose()} />}
 
@@ -1285,13 +1288,14 @@ export const useLg = () => {
 	return useMediaQuery(queries.lg, true);
 };
 
-export function useDebounce<T>(f: () => T, debounceMs: number): T {
-	const [v, setV] = useState(f);
+export function useDebounce(debounceMs: number): ReturnType<typeof debounce> | undefined {
+	const [db, setDb] = useState<ReturnType<typeof debounce>>();
 	useEffect(() => {
-		const ts = setTimeout(() => setV(f()), debounceMs);
-		return () => clearTimeout(ts);
-	}, [f, debounceMs]);
-	return v;
+		const ndb = debounce(debounceMs);
+		setDb(ndb);
+		return () => ndb[Symbol.dispose]();
+	}, [debounceMs]);
+	return db;
 }
 
 export function ErrorPage({ error, retry }: { error?: Error; retry?: () => void }) {
@@ -1357,42 +1361,6 @@ export function useAsync<T extends unknown[], R>(
 		},
 		...state,
 	}), [f, state]);
-}
-
-// if T is disposable, will dispose before rerunning and on unmount
-export function useAsyncEffect<T>(f: () => Promise<T>, deps: unknown[]) {
-	const oldV = useRef<() => void>(null);
-	const x = useAsync(async () => {
-		const v = await f();
-		oldV.current?.();
-		if (typeof v == "object" && v && Symbol.dispose in v) {
-			oldV.current = v[Symbol.dispose] as () => void;
-		}
-
-		return v;
-	});
-
-	useEffect(() => () => {
-		oldV.current?.();
-		oldV.current = null;
-	}, []);
-
-	const changed = useRef(false);
-
-	useEffect(() => {
-		changed.current = true;
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, deps);
-
-	useEffect(() => {
-		if (!x.loading && changed.current) {
-			changed.current = false;
-			x.run();
-		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [...deps, x.loading]);
-
-	return x;
 }
 
 export function listener<E extends HTMLElement, K extends keyof HTMLElementEventMap>(
@@ -1476,21 +1444,6 @@ export function setWith<K>(set: ReadonlySet<K> | null, k: K, del?: boolean) {
 
 export type SetFn<T> = (cb: (old: T) => T) => void;
 
-export function useFnRef<T extends Disposable>(f: () => T, deps?: unknown[]) {
-	const ret = useRef<T>(null);
-	useEffect(() => {
-		const v = f();
-		ret.current = v;
-		return () => {
-			v[Symbol.dispose]();
-			ret.current = null;
-		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, deps);
-
-	return ret;
-}
-
 export function ConfirmModal(
 	{ title, actionName, msg, open, onClose, confirm, defaultYes }: {
 		title?: string;
@@ -1555,8 +1508,7 @@ export function useValidity(
 	onBlur: (ev: FocusEvent) => void;
 	onChange: (ev: ChangeEvent<HTMLInputElement>) => void;
 } {
-	const db = useFnRef(() => debounce(200), []);
-
+	const db = useDebounce(200);
 	const [v, setV] = useState<{ editing: boolean; value: string | null }>({
 		editing: false,
 		value: null,
@@ -1565,7 +1517,7 @@ export function useValidity(
 		if (elem.value != v.value || v.editing) setV({ editing, value: elem.value });
 		if (elem.checkValidity()) {
 			const txt = elem.value;
-			db.current?.call(() => {
+			db!.call(() => {
 				callback(txt);
 				if (!editing) setV({ editing: false, value: null });
 			});
@@ -1689,6 +1641,7 @@ export function FileInput(
 	} & ButtonProps,
 ) {
 	const [err, setErr] = useState<string | null>(null);
+	const [errOpen, setErrOpen] = useState<boolean>(false);
 	const id = useId();
 	const ref = useRef<HTMLInputElement>(null);
 	return <div className="flex flex-col gap-1 items-stretch">
@@ -1718,9 +1671,13 @@ export function FileInput(
 					ev.currentTarget.setCustomValidity("");
 				} else {
 					setErr(err);
+					setErrOpen(true);
 					ev.currentTarget.setCustomValidity(err);
 				}
 			}} />
-		{err != null && <Alert title="Invalid file" txt={err} />}
+		{err != null
+			&& <Modal bad title="Invalid file" open={errOpen} onClose={() => setErrOpen(false)}>
+				{err}
+			</Modal>}
 	</div>;
 }

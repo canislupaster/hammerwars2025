@@ -7,8 +7,9 @@ import { APIError } from "../../shared/util";
 import { LocalStorage, useRequest } from "./clientutil";
 import { Home } from "./home";
 import { RegistrationEditor } from "./registration";
+import { ScoreboardPage } from "./scoreboard";
 import { Alert, Anchor, Button, Card, Container, GotoContext, Input, Loading, Text, ThemeContext,
-	useAsyncEffect, useGoto, useTitle } from "./ui";
+	useGoto, useTitle } from "./ui";
 
 export function Footer() {
 	return <div className="flex flex-col items-center w-full py-5 px-5">
@@ -73,7 +74,7 @@ function RegisterPage() {
 		</MainContainer>
 		: <MainContainer>
 			<Card className="w-full max-w-md gap-3">
-				<Text v="big">Register</Text>
+				<Text v="big" className="self-center">Register</Text>
 				{req.loading ? <Loading /> : <form onSubmit={ev => {
 					ev.preventDefault();
 					if (ev.currentTarget.reportValidity()) {
@@ -81,7 +82,7 @@ function RegisterPage() {
 					}
 				}} className="flex flex-col gap-3">
 					<Text v="smbold">Email</Text>
-					<Input value={email} valueChange={v => setEmail(v)} type="email" />
+					<Input value={email} valueChange={v => setEmail(v)} type="email" required />
 					<Button>Register</Button>
 				</form>}
 				<Text v="sm">
@@ -187,7 +188,7 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 			{failed
 				&& <Alert bad title="You aren't authorized to do that"
 					txt="Please login to an account with privileges." />}
-			<Text v="big">Login</Text>
+			<Text v="big" className="self-center">Login</Text>
 			<form onSubmit={ev => {
 				ev.preventDefault();
 				if (ev.currentTarget.reportValidity()) {
@@ -195,10 +196,10 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 				}
 			}} className="flex flex-col gap-3">
 				<Text v="smbold">Email</Text>
-				<Input type="email" value={user} valueChange={v => setUser(v)} />
+				<Input type="email" value={user} valueChange={v => setUser(v)} required />
 				<Text v="smbold">Password</Text>
 				<Input type="password" autoComplete="current-password" minLength={8} maxLength={100}
-					value={pass} valueChange={v => setPass(v)} />
+					value={pass} valueChange={v => setPass(v)} required />
 				<Button>Continue</Button>
 				{incorrect
 					&& <Alert bad title="Incorrect email or password"
@@ -243,7 +244,7 @@ function InnerApp() {
 		<Route path="/register" component={RegisterPage} />
 		<Route path="/login" component={LoginPage} />
 		<Route path="/verify" component={VerifyPage} />
-		{/* <Route path="/scoreboard" component={Scoreboard} /> */}
+		<Route path="/scoreboard" component={ScoreboardPage} />
 		<Route default component={() =>
 			<ErrorPage errName="Page not found">
 				Go back <Anchor href="/">home</Anchor>.
@@ -266,12 +267,19 @@ function App() {
 		[],
 	);
 
-	useAsyncEffect(async () => {
+	const goto = route.route;
+	useEffect(() => {
 		if (nextRoute == null) return;
-		await Promise.all([...routeTransitions.current.values()].map(x => x()));
-		route.route(nextRoute);
-		setNextRoute(null);
-	}, [nextRoute, route.route]);
+		let active = true;
+		void Promise.all([...routeTransitions.current.values()].map(x => x())).finally(() => {
+			if (!active) return;
+			goto(nextRoute);
+			setNextRoute(null);
+		});
+		return () => {
+			active = false;
+		};
+	}, [goto, nextRoute]);
 
 	return <GotoContext.Provider value={gotoCtx}>
 		<ThemeContext.Provider value={{ theme: "dark", setTheme() {} }}>

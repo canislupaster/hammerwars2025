@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { API, APIClient, APIError, APIRequest, APIRequestParameters, parseExtra, ServerResponse,
-	Session, stringifyExtra } from "../../shared/util";
+import { API, APIClient, APIError, APIRequest, APIRequestParameters, NonFeedAPI, parseExtra,
+	ServerResponse, Session, stringifyExtra } from "../../shared/util";
 
 export type LocalStorage = Partial<{ session: Session }> & { toJSON(): unknown };
 const localStorageKeys: (Exclude<keyof LocalStorage, "toJSON">)[] = ["session"];
@@ -37,7 +37,7 @@ type CurrentRequest<T extends keyof API, Throw extends boolean> = {
 	request: API[T] extends { request: unknown } ? API[T]["request"] : null;
 } | { current: null; request: null };
 
-export function useRequest<T extends keyof API, Throw extends boolean = true>(
+export function useRequest<T extends keyof NonFeedAPI, Throw extends boolean = true>(
 	{ route, initRequest, handler, throw: doThrow }: {
 		route: T;
 		initRequest?: API[T] extends { request: unknown } ? API[T]["request"] : true;

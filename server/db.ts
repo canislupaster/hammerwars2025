@@ -5,12 +5,14 @@ import { ContestProperties, parseExtra, PartialUserInfo, stringifyExtra,
 	UserInfo } from "../shared/util.ts";
 
 type Database = {
-	team: { id: GeneratedAlways<number>; joinCode: string; name: string };
-	teamLogo: {
+	team: { id: GeneratedAlways<number>; joinCode: string; name: string; domJudgeId: number | null };
+	teamLogo: { id: GeneratedAlways<number>; team: number; logo: Buffer; logoMime: string };
+	teamScreenshot: {
 		id: GeneratedAlways<number>;
 		team: number;
-		logo: Buffer | null;
-		logoMime: string | null;
+		mac: string;
+		time: number;
+		path: string;
 	};
 	emailVerification: { id: GeneratedAlways<number>; key: string; email: string };
 	user: { id: GeneratedAlways<number>; team: number | null; email: string; data: string };
@@ -30,6 +32,7 @@ export type UserData = {
 type DatabaseData = {
 	team: Database["team"];
 	teamLogo: Database["teamLogo"];
+	teamScreenshot: Database["teamScreenshot"];
 	resume: Database["resume"];
 	user: Omit<Database["user"], "data"> & { data: UserData };
 	session: Database["session"];
@@ -67,8 +70,17 @@ const migrator = new Migrator({
 								col.notNull()).execute();
 						await db.schema.createTable("teamLogo").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("team", "integer", col =>
-								col.notNull().references("team.id").unique()).addColumn("logo", "blob", c =>
-								c.notNull()).addColumn("logoMime", "text", c =>
+								col.notNull().references("team.id").onDelete("cascade").unique()).addColumn(
+								"logo",
+								"blob",
+								c => c.notNull(),
+							).addColumn("logoMime", "text", c =>
+								c.notNull()).execute();
+						await db.schema.createTable("teamScreenshot").addColumn("id", "integer", col =>
+							col.primaryKey().autoIncrement()).addColumn("team", "integer", c =>
+								c.notNull().references("team.id")).addColumn("mac", "text", c =>
+								c.notNull()).addColumn("time", "integer", c =>
+								c.notNull()).addColumn("path", "text", c =>
 								c.notNull()).execute();
 						await db.schema.createTable("resume").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("user", "integer", col =>

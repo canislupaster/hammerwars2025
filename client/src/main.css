@@ -24,9 +24,14 @@
 }
 
 @custom-variant dark (&:is(html *));
+@custom-variant bad (&:not(:placeholder-shown):invalid);
 @custom-variant theme (&:is(html *));
 @custom-variant enabled (&:not(:disabled));
 @custom-variant valid (&:not(:invalid));
+
+input {
+  accent-color: white;
+}
 
 h3,h2,h1 {
 	font-family: var(--font-big);
