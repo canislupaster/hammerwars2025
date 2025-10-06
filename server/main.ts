@@ -67,7 +67,10 @@ type APIRouteParameters<K extends keyof API> = {
 type APIRoute = {
 	[K in keyof API]: {
 		ratelimit?: { times: number; durationMs: number };
-		handler: (...parameters: APIRouteParameters<K>["input"]) => APIRouteParameters<K>["output"];
+		handler: (
+			this: DisposableStack,
+			...parameters: APIRouteParameters<K>["input"]
+		) => APIRouteParameters<K>["output"];
 	} & APIRouteParameters<K>["validator"] & APIRouteParameters<K>["feed"];
 };
 
@@ -104,21 +107,30 @@ export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, dat
 		}
 
 		const req = "validator" in data ? await parse(data.validator, c) : undefined;
-		if (data.feed != false) {
+		if (data.feed == true) {
 			return streamText(c, async api => {
+				const disp = new DisposableStack();
 				try {
 					const out =
 						await (data.handler as unknown as (
-							c: Context,
+							this: DisposableStack,
 							api: StreamingApi,
+							c: Context,
 							request: typeof req,
-						) => Promise<AsyncIterable<(ServerResponse<K> & { type: "ok" })["data"]>>)(c, api, req);
+						) => Promise<AsyncIterable<(ServerResponse<K> & { type: "ok" })["data"]>>).call(
+							disp,
+							api,
+							c,
+							req,
+						);
 					for await (const x of out) {
-						await api.writeln(stringifyExtra(x));
+						await api.writeln(stringifyExtra({ type: "ok", data: x } satisfies ServerResponse<K>));
 					}
 				} catch (e) {
+					console.error("feed error", e);
 					await api.writeln(stringifyExtra(errToJson(e)));
 				}
+				disp.dispose();
 				await api.close();
 			});
 		} else {

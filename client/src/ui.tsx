@@ -8,7 +8,7 @@ import { useCallback, useContext, useEffect, useErrorBoundary, useId, useMemo, u
 	useState } from "preact/hooks";
 import { ArrowContainer, Popover, PopoverState } from "react-tiny-popover";
 import { twJoin, twMerge } from "tailwind-merge";
-import { fill } from "../../shared/util";
+import { debounce, delay, fill } from "../../shared/util";
 
 // dump of a bunch of UI & utility stuff ive written...
 
@@ -424,7 +424,7 @@ export const ShowTransition = forwardRef<HTMLElement, ShowTransitionProps>(
 			let enabled = true;
 			const wait = async () => {
 				for (;;) {
-					await new Promise<void>(res => setTimeout(res, 100));
+					await delay(100);
 					if (!enabled) break;
 
 					const anims = el.getAnimations({ subtree: true }).filter(anim =>
@@ -1376,47 +1376,6 @@ export function listener<E extends HTMLElement, K extends keyof HTMLElementEvent
 	};
 }
 
-export function debounce(ms: number) {
-	let ts: number | null = null;
-	return {
-		call(f: () => void) {
-			if (ts != null) clearTimeout(ts);
-			ts = setTimeout(() => f(), ms);
-		},
-		cancel() {
-			if (ts != null) {
-				clearTimeout(ts);
-				ts = null;
-			}
-		},
-		[Symbol.dispose]() {
-			this.cancel();
-		},
-	} as const;
-}
-
-export function throttle(ms: number, callOnDispose?: boolean) {
-	let ts: number | null = null;
-	let cur: (() => void) | null = null;
-	return {
-		call(f: () => void) {
-			if (ts == null) {
-				f();
-				ts = setTimeout(() => {
-					cur?.();
-					cur = ts = null;
-				}, ms);
-			} else {
-				cur = f;
-			}
-		},
-		[Symbol.dispose]() {
-			if (ts != null) clearTimeout(ts);
-			if (cur != null && callOnDispose == true) cur?.();
-		},
-	} as const;
-}
-
 export function useDisposable(effect: () => Disposable | undefined, deps?: unknown[]) {
 	useEffect(() => {
 		const obj = effect();
@@ -1425,21 +1384,6 @@ export function useDisposable(effect: () => Disposable | undefined, deps?: unkno
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, deps);
-}
-
-// awful time complexity lmfao
-export function mapWith<K, V>(map: ReadonlyMap<K, V> | null, k: K, v?: V) {
-	const newMap = new Map(map);
-	if (v !== undefined) newMap.set(k, v);
-	else newMap.delete(k);
-	return newMap;
-}
-
-export function setWith<K>(set: ReadonlySet<K> | null, k: K, del?: boolean) {
-	const newSet = new Set(set);
-	if (del == true) newSet.delete(k);
-	else newSet.add(k);
-	return newSet;
 }
 
 export type SetFn<T> = (cb: (old: T) => T) => void;

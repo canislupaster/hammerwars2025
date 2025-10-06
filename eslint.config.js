@@ -1,5 +1,6 @@
 import pluginJs from "@eslint/js";
 import preact from "eslint-config-preact";
+import { defineConfig } from "eslint/config";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
@@ -18,8 +19,8 @@ const commonRules = {
 
 const common = { rules: commonRules };
 
-export default [
-	...tseslint.config({
+export default defineConfig([
+	{
 		files: ["client/src/*.{ts,tsx,js,jsx,d.ts}", "shared/**/*.ts"],
 		extends: [
 			pluginJs.configs.recommended,
@@ -28,10 +29,11 @@ export default [
 			common,
 		],
 		languageOptions: { globals: { ...globals.browser }, parserOptions: { projectService: true } },
-	}, { ignores: ["dist"] }),
-	...tseslint.config({
-		files: ["scripts/**/*.ts", "server/**/*.ts", "daemon/**/*.ts", "shared/**/*.ts"],
+	},
+	{ ignores: ["dist"] },
+	{
+		files: ["scripts/**/*", "server/**/*", "shared/**/*"],
 		extends: [pluginJs.configs.recommended, ...tseslint.configs.recommendedTypeChecked, common],
 		languageOptions: { globals: { ...globals.node }, parserOptions: { projectService: true } },
-	}),
-];
+	},
+]);

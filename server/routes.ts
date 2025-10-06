@@ -2,16 +2,18 @@ import { SendEmailCommand } from "@aws-sdk/client-ses";
 import { Hono } from "hono";
 import { Buffer } from "node:buffer";
 import { randomInt } from "node:crypto";
-import { stat, writeFile } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import z from "zod";
 import { randomShirtSeed } from "../shared/genshirt.ts";
-import { API, ContestProperties, fill, logoMaxSize, maxPromptLength, resumeMaxSize,
-	screenshotMaxWidth, shirtSizes, UserInfo, validDiscordRe, validNameRe } from "../shared/util.ts";
-import { DBTransaction, getDb, getDbCheck, getProperties, getProperty, setDb, setProperty,
-	transaction, updateDb, UserData } from "./db.ts";
+import { API, ContestProperties, fill, getTeamLogoURL, logoMaxSize, maxPromptLength, resumeMaxSize,
+	screenshotMaxWidth, shirtSizes, TeamContestProperties, UserInfo, validDiscordRe,
+	validNameRe } from "../shared/util.ts";
+import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getProperty,
+	propertiesChanged, setDb, setProperty, transaction, updateDb, UserData } from "./db.ts";
+import { DOMJudge } from "./domjudge.ts";
 import { makeVerificationEmail } from "./email.ts";
 import { auth, Context, doHash, err, genKey, HonoEnv, keyAuth, makeRoute, openai, rootUrl,
 	sesClient } from "./main.ts";
@@ -44,9 +46,14 @@ const partialUserInfoSchema = z.object({
 	inPerson: inPersonSchema.partial().and(z.object({ needTransportation: z.boolean() })).nullable(),
 	shirtSeed: z.int32(),
 	shirtHue: z.number().min(0).max(360),
+	agreeRules: z.boolean(),
 });
 
 export async function makeRoutes(app: Hono<HonoEnv>) {
+	const teamChanged = new EventEmitter<number>();
+	const domJudge = new DOMJudge();
+	domJudge.start();
+
 	makeRoute(app, "register", {
 		validator: z.object({ email: z.email() }),
 		ratelimit: { durationMs: 3600*1000*24, times: 5 },
@@ -141,7 +148,13 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					userId = prevUser.id;
 				} else {
 					const data: UserData = {
-						info: { inPerson: null, discord: null, shirtSeed: randomShirtSeed(), shirtHue: 0 },
+						info: {
+							inPerson: null,
+							discord: null,
+							shirtSeed: randomShirtSeed(),
+							shirtHue: 0,
+							agreeRules: false,
+						},
 						submitted: null,
 						lastEdited: Date.now(),
 						...saltHash,
@@ -257,6 +270,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 							if (hasResume == undefined) {
 								throw err("Can't submit: no resume provided for in-person participant");
 							}
+						} else if (!req.info.agreeRules) {
+							throw new Error("rules not agreed to");
 						}
 						submitted = parsed.data;
 					}
@@ -267,6 +282,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					};
 				})
 			);
+			domJudge.updateTeams();
 		},
 	});
 
@@ -324,6 +340,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					await setTeamLogo(trx, teamId, logo, req.logo.mime);
 				}
 			});
+			domJudge.updateTeams();
 		},
 	});
 
@@ -341,6 +358,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				if (!team) throw err("Invalid join code.");
 				await setDb(trx, "user", userId, { team: team.id });
 			});
+			domJudge.updateTeams();
 		},
 	});
 
@@ -355,6 +373,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					.where("team", "=", u.team).executeTakeFirstOrThrow();
 				if (count.count == 0) await setDb(trx, "team", u.team, null);
 			});
+			domJudge.updateTeams();
 		},
 	});
 
@@ -382,7 +401,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					return {
 						...data2,
 						team: {
-							logo: logo != null ? `teamLogo/${logo.id}` : null,
+							logo: logo != null ? getTeamLogoURL(logo.id) : null,
 							joinCode: teamData.joinCode,
 							name: teamData.name,
 						},
@@ -499,6 +518,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 						name: team.name,
 						logoId: logo?.id ?? null,
 						domJudgeId: team.domJudgeId,
+						domJudgePassword: team.domJudgePassword,
 						joinCode: team.joinCode,
 					});
 				}
@@ -507,7 +527,38 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		},
 	});
 
-	await makeRoute(app, "setTeams", {});
+	makeRoute(app, "setTeams", {
+		validator: z.array(
+			z.object({
+				id: z.number(),
+				name: nameSchema,
+				domJudgeId: z.string().nullable(),
+				domJudgePassword: z.string().nullable(),
+				joinCode: z.string(),
+			}).or(z.object({ id: z.number(), delete: z.literal(true) })),
+		),
+		async handler(c, req) {
+			await keyAuth(c, true);
+			await transaction(async trx => {
+				for (const team of req) {
+					if ("delete" in team) {
+						await setDb(trx, "team", team.id, null);
+						continue;
+					}
+
+					await setDb(trx, "team", team.id, {
+						name: team.name,
+						joinCode: team.joinCode,
+						domJudgeId: team.domJudgeId,
+						domJudgePassword: team.domJudgePassword,
+					});
+
+					teamChanged.emit(team.id);
+				}
+			});
+			domJudge.updateTeams();
+		},
+	});
 
 	makeRoute(app, "getResumeId", {
 		validator: z.object({ id: z.number() }),
@@ -533,8 +584,67 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 	makeRoute(app, "scoreboard", {
 		feed: true,
-		handler: async function* handler(api, c) {
-			yield { teams: new Map() };
+		handler: async function* handler(api) {
+			yield domJudge.scoreboard;
+			const abort = new AbortController();
+			api.onAbort(() => abort.abort());
+			while (!abort.signal.aborted) {
+				const sc = await domJudge.scoreboardUpdates.wait(abort.signal);
+				if (sc == null) return;
+				yield sc;
+			}
+		},
+	});
+
+	makeRoute(app, "teamFeed", {
+		feed: true,
+		validator: z.object({ id: z.int() }),
+		handler: async function* handler(api, c, { id }) {
+			await keyAuth(c, false);
+
+			const getCred = async () => {
+				const team = await transaction(trx => getDbCheck(trx, "team", id));
+				const domJudgeUser = team.domJudgeId != null
+					? domJudge.getTeamUsername(team.domJudgeId)
+					: null;
+				return domJudgeUser != null && team.domJudgePassword != null
+					? { user: domJudgeUser, pass: team.domJudgePassword }
+					: null;
+			};
+
+			const emitter = new EventEmitter<
+				{ type: "cred" } | { type: "props"; props: TeamContestProperties }
+			>();
+
+			this.use(teamChanged.on(v => {
+				if (v == id) emitter.emit({ type: "cred" });
+			}));
+
+			const defaultTeamProps = {
+				firewallEnabled: false,
+				screenshotsEnabled: false,
+				visibleDirectories: [],
+			};
+
+			this.use(propertiesChanged.on(c => {
+				emitter.emit({ type: "props", props: c.team ?? defaultTeamProps });
+			}));
+
+			const abort = new AbortController();
+			api.onAbort(() => abort.abort());
+
+			const state = {
+				domJudgeCredentials: await getCred(),
+				teamProperties: (await transaction(trx => getProperties(trx))).team ?? defaultTeamProps,
+			};
+
+			while (!abort.signal.aborted) {
+				yield { type: "update", state };
+				const ev = await emitter.wait();
+				if (ev == null) break;
+				if (ev.type == "cred") state.domJudgeCredentials = await getCred();
+				else state.teamProperties = ev.props;
+			}
 		},
 	});
 

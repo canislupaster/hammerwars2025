@@ -5,5 +5,4 @@
   "files.associations": {
     "dprint.json": "jsonc"
   },
-  "postman.settings.dotenv-detection-notification-visibility": false,
 }

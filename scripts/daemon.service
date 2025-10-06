@@ -1,0 +1,12 @@
+[Unit]
+Description=HammerWars Daemon
+
+[Service]
+ExecStart=bash -c "pnpm run daemon"
+Restart=always
+RestartSec=3
+WorkingDirectory=/home/hammerwars/code/scripts
+EnvironmentFile=/home/hammerwars/code/scripts/.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,6 @@
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-preact";
 import { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
 import { fill } from "../../shared/util";
 import { Footer } from "./main";
@@ -93,8 +93,129 @@ function FAQAccordion({ items }: { items: FAQItem[] }) {
 	</div>;
 }
 
-function Hero() {
+type PatternArgs = {
+	dt: number;
+	nx: number;
+	ny: number;
+	sec: number;
+	flipped: boolean[][];
+	flippedFrom: ([number, number] | null)[][];
+};
+
+abstract class Pattern {
+	abstract startProb: number;
+	abstract update(args: PatternArgs): void;
+}
+
+class Pattern1 extends Pattern {
+	newPatProb = 0.2;
+	r = -Math.log(1-this.newPatProb);
+	delay = 0.2;
+
+	startProb = 0.5;
+	pats = ["000111000", "010111010", "101010101", "010010010", "100010001", "001010100"].map(p =>
+		fill(3, i => fill(3, j => p[i*3+j] == "1"))
+	);
+	activePats: { pat: boolean[][]; y: number; x: number; nextStep: number }[] = [];
+
+	update({ dt, nx, ny, sec, flipped }: PatternArgs) {
+		if (Math.random() > Math.exp(-this.r*dt) || this.activePats.length == 0) {
+			this.activePats.push({
+				pat: this.pats[4],
+				y: Math.floor(Math.random()*(ny+2)-2),
+				x: -2,
+				nextStep: sec,
+			});
+		}
+
+		this.activePats = this.activePats.filter(pat => {
+			if (pat.nextStep > sec) return true;
+
+			for (let dx = 0; dx < 3; dx++) {
+				for (let dy = 0; dy < 3; dy++) {
+					if (pat.pat[dy][dx]) {
+						const x = dx+pat.x, y = dy+pat.y;
+						if (x >= 0 && x < nx && y >= 0 && y < ny) {
+							flipped[y][x] = !flipped[y][x];
+						}
+					}
+				}
+			}
+
+			pat.x++;
+			pat.nextStep += this.delay;
+			return pat.x < nx;
+		});
+	}
+}
+
+export class Pattern2 extends Pattern {
+	r = -Math.log(1-0.5);
+	delay = 0.3;
+	lastStep = 0;
+	flipDur = 10;
+
+	startProb = 0.0;
+	update({ dt, nx, ny, sec, flipped, flippedFrom }: PatternArgs) {
+		const dirI = sec%(4*this.flipDur) > 2*this.flipDur ? -1 : 1;
+		const dirJ = sec%(2*this.flipDur) > this.flipDur ? -1 : 1;
+		if (Math.random() > Math.exp(-this.r*dt)) {
+			let u: number, v: number;
+			if (Math.random() > 0.5) {
+				u = dirI == 1 ? ny-1 : 0;
+				v = Math.floor(Math.random()*nx);
+			} else {
+				u = Math.floor(Math.random()*ny);
+				v = dirJ == 1 ? nx-1 : 0;
+			}
+			flipped[u][v] = true;
+		}
+		if (sec >= this.lastStep+this.delay) {
+			this.lastStep = sec;
+			const oflipped = fill(ny, i => fill(nx, j => flipped[i][j]));
+			const g = (i: number, j: number) =>
+				i < 0 || i >= ny || j < 0 || j >= nx ? true : oflipped[i][j];
+			for (let i = 0; i < ny; i++) {
+				for (let j = 0; j < nx; j++) {
+					const s = (i2: number, j2: number, v: boolean) => {
+						if (i2 < 0 || i2 >= ny || j2 < 0 || j2 >= nx) return false;
+						if (v && !flipped[i2][j2]) flippedFrom[i2][j2] = [i, j];
+						flipped[i2][j2] = v;
+						return true;
+					};
+					if (oflipped[i][j]) {
+						let mayDel = true;
+						let f = false;
+						const a = g(i+dirI, j);
+						const b = g(i, j+dirJ);
+						f ||= a || b;
+						if (a && b) s(i-dirI, j-dirJ, true);
+						if (a) {
+							s(i+dirI, j, false);
+							if (s(i-dirI, j, true)) mayDel = false;
+						} else if (b) {
+							s(i, j+dirJ, false);
+							if (s(i, j-dirJ, true)) mayDel = false;
+						}
+						if (!f || (mayDel && Math.random() < 0.0)) s(i, j, false);
+					}
+				}
+			}
+		}
+	}
+}
+
+export function PatternBg(
+	{ velocity, pat, grad }: { velocity?: number; pat: () => Pattern; grad?: boolean },
+) {
 	const container = useRef<HTMLDivElement>(null);
+	const patInst = useRef<Pattern | null>(null);
+
+	useEffect(() => {
+		if (patInst.current == null) {
+			patInst.current = pat();
+		}
+	}, [pat]);
 
 	useEffect(() => {
 		if (!container.current) return;
@@ -115,53 +236,33 @@ function Hero() {
 				}));
 
 			el.replaceChildren(...nodes.flat());
-			const speeds = fill(2, fill(ny, () => Math.random()/5+0.1));
+			const speeds = fill(2, fill(ny, () => (velocity ?? 1)*(Math.random()/5+0.1)));
 			let last = performance.now()/1000;
 			const shiftOff = fill(2, i => fill(ny, j => Math.floor(last*speeds[i][j])));
 
 			const brightness = fill(ny, () => fill(nx, () => 0));
-			const flipped = fill(ny, () => fill(nx, () => Math.random() > 0.5));
-			const pats = ["000111000", "010111010", "101010101", "010010010", "100010001", "001010100"]
-				.map(p => fill(3, i => fill(3, j => p[i*3+j] == "1")));
-			let activePats: { pat: boolean[][]; y: number; x: number; nextStep: number }[] = [];
-			const newPatProb = 0.2, r = -Math.log(1-newPatProb), delay = 0.2;
+			const offset = fill(ny, () => fill(nx, () => [0, 0]));
+			const flipped = fill(ny, () => fill(nx, () => Math.random() < patInst.current!.startProb));
 
 			const w = el.clientWidth;
 			const yOff = (ny*sz-el.clientHeight)/2;
 			const layout = (t: number) => {
 				const sec = t/1000;
 				const dt = sec-last;
-				if (Math.random() > Math.exp(-r*dt) || activePats.length == 0) {
-					activePats.push({
-						pat: pats[4],
-						y: Math.floor(Math.random()*(ny+2)-2),
-						x: -2,
-						nextStep: sec,
-					});
-				}
-
-				activePats = activePats.filter(pat => {
-					if (pat.nextStep > sec) return true;
-
-					for (let dx = 0; dx < 3; dx++) {
-						for (let dy = 0; dy < 3; dy++) {
-							if (pat.pat[dy][dx]) {
-								const x = dx+pat.x, y = dy+pat.y;
-								if (x >= 0 && x < nx && y >= 0 && y < ny) {
-									flipped[y][x] = !flipped[y][x];
-								}
-							}
+				const flippedFrom: PatternArgs["flippedFrom"] = fill(ny, () => fill(nx, () => null));
+				patInst.current!.update({ dt, sec, ny, nx, flipped, flippedFrom });
+				for (let j = 0; j < ny; j++) {
+					for (let i = 0; i < nx; i++) {
+						const v = flippedFrom[j][i];
+						if (v != null && brightness[j][i] < 0.1) {
+							offset[j][i] = [v[0]+offset[v[0]][v[1]][0]-j, v[1]+offset[v[0]][v[1]][1]-i];
 						}
 					}
-
-					pat.x++;
-					pat.nextStep += delay;
-					return pat.x < nx;
-				});
-
+				}
 				last = sec;
 
 				const coeff = Math.exp(-dt*3);
+				const moveCoeff = Math.exp(-dt*6);
 				for (let j = 0; j < ny; j++) {
 					let off = -2*sz;
 					for (let l = 0; l <= 1; l++) {
@@ -179,12 +280,16 @@ function Hero() {
 					}
 
 					for (let i = 0; i < nx; i++) {
-						const l = i*sz+off;
+						const l = (i+offset[j][i][1])*sz+off;
 						nodes[j][i].style.left = `${l}px`;
-						nodes[j][i].style.top = `${j*sz-yOff}px`;
+						nodes[j][i].style.top = `${(j+offset[j][i][0])*sz-yOff}px`;
 						const target = flipped[j][i] ? 1 : 0;
 						brightness[j][i] = coeff*brightness[j][i]+(1-coeff)*target;
-						nodes[j][i].style.background = `rgba(255,255,255,${brightness[j][i]*l/w})`;
+						offset[j][i] = [moveCoeff*offset[j][i][0], moveCoeff*offset[j][i][1]];
+						const close = !offset[j][i].some(x => Math.abs(x) > 0.2);
+						nodes[j][i].style.zIndex = close ? "0" : "-1";
+						const b = brightness[j][i]*(grad == true ? l/w : 1);
+						nodes[j][i].style.background = close ? `hsl(0 0 ${b*100}%)` : `rgba(255,255,255,${b})`;
 					}
 				}
 
@@ -201,7 +306,14 @@ function Hero() {
 			observer.disconnect();
 			if (frame != null) cancelAnimationFrame(frame);
 		};
-	}, []);
+	}, [grad, pat, velocity]);
+
+	return <div
+		className="absolute left-0 right-0 top-0 bottom-0 overflow-hidden mix-blend-screen -z-10"
+		ref={container} />;
+}
+
+function Hero() {
 	const goto = useGoto();
 	const md = useMd();
 	return <div className="w-full h-[30vh] relative">
@@ -235,7 +347,7 @@ function Hero() {
 			</div>
 		</div>
 		<div className="absolute left-0 right-0 top-0 bottom-0 from-zinc-900 to-transparent bg-gradient-to-r z-10" />
-		<div className="absolute left-0 right-0 top-0 bottom-0 overflow-hidden" ref={container} />
+		<PatternBg pat={() => new Pattern1()} grad />
 	</div>;
 }
 

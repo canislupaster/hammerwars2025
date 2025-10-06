@@ -8,7 +8,9 @@
 			"program": "${workspaceFolder}/server/main.ts",
 			"cwd": "${workspaceFolder}/server",
 			"runtimeExecutable": "tsx",
-			"envFile": "${workspaceFolder}/server/.env",
+			"runtimeArgs": [
+				"--env-file=${workspaceFolder}/server/.env"
+			],
 			"console": "integratedTerminal"
 		},
 		{
@@ -18,7 +20,9 @@
 			"program": "${workspaceFolder}/scripts/manage.ts",
 			"cwd": "${workspaceFolder}/scripts",
 			"runtimeExecutable": "tsx",
-			"envFile": "${workspaceFolder}/scripts/.env",
+			"runtimeArgs": [
+				"--env-file=${workspaceFolder}/scripts/.env"
+			],
 			"console": "integratedTerminal"
 		}
 	]

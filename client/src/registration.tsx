@@ -264,7 +264,8 @@ export function RegistrationEditor() {
 			pizza: userInfo?.inPerson != null && userInfo.inPerson.pizza == undefined,
 			sandwich: userInfo?.inPerson != null && userInfo.inPerson.sandwich == undefined,
 			shirtSize: userInfo?.inPerson != null && userInfo.inPerson.shirtSize == undefined,
-			resume: data?.hasResume != true,
+			resume: userInfo?.inPerson != null && data?.hasResume != true,
+			rules: data?.info.inPerson == null && data?.info.agreeRules != true,
 		} as const),
 		[userInfo, data],
 	);
@@ -419,6 +420,26 @@ export function RegistrationEditor() {
 								modInfo("shirtHue", h);
 							}} />
 						</div>)}
+
+					{userInfo.inPerson == null && <>
+						<Text v="big" className="mt-4">Rules</Text>
+
+						<p>
+							The open contest will follow Codeforces rules (see{" "}
+							<Anchor href="https://codeforces.com/blog/entry/4088">here</Anchor> and{" "}
+							<Anchor href="https://codeforces.com/blog/entry/133941">here</Anchor>): you and your
+							team cannot use any ideas, code, conversations, or other resources created after the
+							start of the contest except by your team.
+						</p>
+						<p>
+							During the contest, you are not allowed to communicate about the problems with anyone
+							outside your team. <b>Nontrivial use of AI is strictly prohibited.</b>
+						</p>
+
+						<Checkbox checked={userInfo.agreeRules} valueChange={v => modInfo("agreeRules", v)}
+							label="Do you agree to follow the rules of the open contest?" />
+						{makeMissingAlert("rules", "Your consent to rules")}
+					</>}
 				</div>
 				{data.submitted
 					? <div className="flex flex-row gap-2 items-center mt-5">

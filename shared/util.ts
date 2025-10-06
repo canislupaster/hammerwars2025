@@ -25,6 +25,65 @@ export function stringifyExtra(value: unknown) {
 	});
 }
 
+// awful time complexity lmfao
+export function mapWith<K, V>(map: ReadonlyMap<K, V> | null, k: K, v?: V) {
+	const newMap = new Map(map);
+	if (v !== undefined) newMap.set(k, v);
+	else newMap.delete(k);
+	return newMap;
+}
+
+export function setWith<K>(set: ReadonlySet<K> | null, k: K, del?: boolean) {
+	const newSet = new Set(set);
+	if (del == true) newSet.delete(k);
+	else newSet.add(k);
+	return newSet;
+}
+
+export function debounce(ms: number) {
+	let ts: number | null = null;
+	return {
+		call(f: () => void) {
+			if (ts != null) clearTimeout(ts);
+			ts = setTimeout(() => f(), ms);
+		},
+		cancel() {
+			if (ts != null) {
+				clearTimeout(ts);
+				ts = null;
+			}
+		},
+		[Symbol.dispose]() {
+			this.cancel();
+		},
+	} as const;
+}
+
+export function throttle(ms: number, callOnDispose?: boolean) {
+	let ts: number | null = null;
+	let cur: (() => void) | null = null;
+	return {
+		call(f: () => void) {
+			cur = f;
+			if (ts == null) {
+				const p = () => {
+					cur!();
+					cur = null;
+					ts = setTimeout(() => {
+						if (cur) p();
+						else ts = null;
+					}, ms);
+				};
+				p();
+			}
+		},
+		[Symbol.dispose]() {
+			if (ts != null) clearTimeout(ts);
+			if (cur != null && callOnDispose == true) cur?.();
+		},
+	} as const;
+}
+
 export function parseExtra(str: string | null): unknown {
 	return str == null ? null : JSON.parse(str, (_, v) => {
 		const v2 = v as { __dtype: "set"; value: [unknown][] } | {
@@ -65,10 +124,17 @@ export type UserInfo = {
 	} | null;
 };
 
+export type TeamContestProperties = {
+	firewallEnabled: boolean;
+	screenshotsEnabled: boolean;
+	visibleDirectories: string[];
+};
+
 export type ContestProperties = {
 	registrationEnds: number;
 	registrationOpen: boolean;
-	internetAccessAllowed: boolean;
+	domJudgeCid: string;
+	team: TeamContestProperties;
 };
 
 export type Session = { id: number; key: string };
@@ -77,31 +143,50 @@ export type PartialUserInfo = Partial<Omit<UserInfo, "inPerson">> & {
 	shirtSeed: number;
 	shirtHue: number;
 	discord: string | null;
+	agreeRules: boolean;
 };
 
-export type ScoreboardTeam = {
-	logo: string | null;
-	problems: Map<string, { submissionTime: number; ac: boolean; penalty: number }>;
-	members: string[];
+export type ScoreboardLastSubmission = {
+	submissionTimeMs: number;
+	penaltyMinutes: number;
+	incorrect: number;
+	ac: boolean | null;
 };
 
-export function cmpTeam(a: ScoreboardTeam, b: ScoreboardTeam) {
-	const aSolves = [...a.problems.values()].filter(x => x.ac);
-	const bSolves = [...b.problems.values()].filter(x => x.ac);
-	return aSolves.length != bSolves.length
-		? bSolves.length-aSolves.length
-		: aSolves.reduce((u, v) => u+v.penalty, 0)-bSolves.reduce((u, v) => u+v.penalty, 0);
-}
+export type ScoreboardTeam = Readonly<
+	{
+		name: string;
+		logo: string | null;
+		rank: number;
+		solves: number;
+		totalPenaltyMinutes: number;
+		problems: ReadonlyMap<string, Readonly<ScoreboardLastSubmission>>;
+		members: string[];
+	}
+>;
 
-export type Scoreboard = { teams: Map<number, ScoreboardTeam | null> };
+export type Scoreboard = Readonly<
+	{
+		contestName?: string;
+		teams: ReadonlyMap<number, ScoreboardTeam>;
+		problemNames: ReadonlyMap<string, string>;
+		startTimeMs?: number;
+		freezeTimeMs?: number;
+		endTimeMs?: number;
+		penaltyTimeMs?: number;
+	}
+>;
 
 export type AdminTeamData = {
 	id: number;
 	name: string;
-	domJudgeId: number | null;
+	domJudgeId: string | null;
+	domJudgePassword: string | null;
 	joinCode: string;
 	logoId: number | null;
 };
+
+export type DOMJudgeActiveContest = { cid: string; name?: string } | null;
 
 export type API = {
 	register: { request: { email: string }; response: "sent" | "alreadySent" };
@@ -150,16 +235,16 @@ export type API = {
 			teams: AdminTeamData[];
 		};
 	};
-	setTeams: { request: AdminTeamData[] };
+	setTeams: { request: (Omit<AdminTeamData, "logoId"> | { id: number; delete: true })[] };
 	teamFeed: {
 		request: { id: number };
 		feed: true;
 		response: {
 			type: "update";
 			state: {
-				startTime?: number;
-				endTime?: number;
-				domjudgeCredentials: { user: string; pass: string } | null;
+				domJudgeCredentials: { user: string; pass: string } | null;
+				domJudgeActiveContest: DOMJudgeActiveContest;
+				teamProperties: TeamContestProperties;
 			};
 		};
 	};
@@ -176,11 +261,41 @@ export type ServerResponse<K extends keyof API> = { type: "error"; error: APIErr
 export type APIRequest<T extends keyof API> = API[T] extends { request: unknown }
 	? [API[T]["request"]]
 	: [];
+
 type IsNonFeedAPI<K extends keyof API> = API[K] extends { feed: true } ? never : K;
 type IsFeedAPI<K extends keyof API> = API[K] extends { feed: true } ? K : never;
 export type NonFeedAPI = { [K in keyof API as IsNonFeedAPI<K>]: API[K] };
 export type FeedAPI = { [K in keyof API as IsFeedAPI<K>]: API[K] };
-export type APIRequestParameters = { [K in keyof API]: [K, ...APIRequest<K>] };
+
+export async function* handleNDJSONResponse(resp: Response) {
+	const reader = resp.body!.pipeThrough(new TextDecoderStream()).getReader();
+	try {
+		let buf = "", i = 0;
+		while (true) {
+			const { value, done } = await reader.read();
+			if (value != undefined) buf += value;
+			while (i < buf.length) {
+				if (buf[i++] == "\n") {
+					yield parseExtra(buf.slice(0, i-1));
+					buf = buf.slice(i);
+					i = 0;
+				}
+			}
+			if (done) {
+				if (buf.length > 0) yield parseExtra(buf);
+				return;
+			}
+		}
+	} finally {
+		await reader.cancel();
+	}
+}
+
+export function delay(ms: number) {
+	return new Promise<void>(res => setTimeout(res, ms));
+}
+
+export const getTeamLogoURL = (logoId: number) => `teamLogo/${logoId}`;
 
 export class APIClient {
 	constructor(
@@ -192,8 +307,8 @@ export class APIClient {
 		},
 	) {}
 
-	async #fetch<T extends keyof API>(...args: APIRequestParameters[T]) {
-		return await fetch(new URL(args[0], this.baseUrl), {
+	async #fetch<T extends keyof API>(k: T, ...args: APIRequest<T>) {
+		return await fetch(new URL(k, this.baseUrl), {
 			headers: {
 				"Content-Type": "application/json",
 				...this.auth.apiKey != null
@@ -202,7 +317,7 @@ export class APIClient {
 					? { Authorization: `Basic ${this.auth.session.id} ${this.auth.session.key}` }
 					: {},
 			},
-			body: typeof args[1] == "function" ? undefined : stringifyExtra(args[1]),
+			body: args.length > 0 ? stringifyExtra(args[0]) : undefined,
 			credentials: "same-origin",
 			method: "POST",
 		});
@@ -218,31 +333,15 @@ export class APIClient {
 		return data.data;
 	}
 
-	async feed<T extends keyof FeedAPI>(...args: APIRequestParameters[T]) {
-		const resp = await this.#fetch(...args);
-		const reader = resp.body!.pipeThrough(new TextDecoderStream()).getReader();
-		// eslint-disable-next-line @typescript-eslint/no-this-alias
-		const t = this;
-		return (async function*() {
-			let buf = "", i = 0;
-			while (true) {
-				const { value, done } = await reader.read();
-				if (value != undefined) buf += value;
-				while (i < buf.length) {
-					if (buf[i++] == "\n") {
-						const event = parseExtra(buf.slice(0, i-1)) as ServerResponse<T>;
-						yield t.#handleResp(event);
-						buf = buf.slice(i);
-						i = 0;
-					}
-				}
-				if (done) return;
-			}
-		})();
+	async *feed<T extends keyof FeedAPI>(k: T, ...args: APIRequest<T>) {
+		const resp = await this.#fetch(k, ...args);
+		for await (const x of handleNDJSONResponse(resp)) {
+			yield this.#handleResp(x as ServerResponse<T>);
+		}
 	}
 
-	async request<T extends keyof NonFeedAPI>(...args: APIRequestParameters[T]) {
-		const resp = await this.#fetch(...args);
+	async request<T extends keyof NonFeedAPI>(k: T, ...args: APIRequest<T>) {
+		const resp = await this.#fetch(k, ...args);
 		const data = parseExtra(await resp.text()) as ServerResponse<T>;
 		return this.#handleResp(data);
 	}

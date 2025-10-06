@@ -22,7 +22,6 @@
   "include": [
     "client/vite.config.ts",
     "server/**/*",
-    "daemon/**/*",
     "shared/**/*",
     "scripts/**/*"
   ]

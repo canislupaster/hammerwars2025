@@ -3,6 +3,5 @@ onlyBuiltDependencies:
   - esbuild
 packages:
   - client
-  - daemon
   - server
   - scripts

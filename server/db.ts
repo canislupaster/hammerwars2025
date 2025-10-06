@@ -5,7 +5,14 @@ import { ContestProperties, parseExtra, PartialUserInfo, stringifyExtra,
 	UserInfo } from "../shared/util.ts";
 
 type Database = {
-	team: { id: GeneratedAlways<number>; joinCode: string; name: string; domJudgeId: number | null };
+	team: {
+		id: GeneratedAlways<number>;
+		joinCode: string;
+		name: string;
+		domJudgeId: string | null;
+		domJudgeUser: string | null;
+		domJudgePassword: string | null;
+	};
 	teamLogo: { id: GeneratedAlways<number>; team: number; logo: Buffer; logoMime: string };
 	teamScreenshot: {
 		id: GeneratedAlways<number>;
@@ -58,7 +65,8 @@ const migrator = new Migrator({
 						await db.schema.createTable("team").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("name", "text", c =>
 								c.notNull()).addColumn("joinCode", "text", c =>
-								c.notNull()).execute();
+								c.notNull()).addColumn("domJudgeId", "text", c =>
+								c.unique()).addColumn("domJudgePassword", "text").execute();
 						await db.schema.createTable("emailVerification").addColumn("id", "integer", c =>
 							c.primaryKey().autoIncrement()).addColumn("key", "text", c =>
 								c.notNull()).addColumn("email", "text", c =>
@@ -212,6 +220,61 @@ export async function getProperty<T extends keyof ContestProperties>(
 	return parseExtra(row.value) as ContestProperties[T];
 }
 
+export class EventEmitter<T> {
+	#listeners = new Set<(x: T) => void>();
+	wait<Abort extends boolean>(...stop: Abort extends true ? [AbortSignal] : []) {
+		const abortSignal = stop[0];
+		return new Promise<Abort extends true ? T | null : T>(res => {
+			const rem = () => {
+				this.#listeners.delete(done);
+				abortSignal?.removeEventListener("abort", rem);
+				res(null as Abort extends true ? T | null : T);
+			};
+			const done = (v: T) => {
+				this.#listeners.delete(done);
+				abortSignal?.removeEventListener("abort", rem);
+				res(v as Abort extends true ? T | null : T);
+			};
+			this.#listeners.add(done);
+			abortSignal?.addEventListener("abort", rem);
+		});
+	}
+	async waitFor<Abort extends boolean>(
+		cond: (x: T) => boolean,
+		...stop: Abort extends true ? [AbortSignal] : []
+	) {
+		while (true) {
+			const r = await this.wait(...stop);
+			if (r == null) return null;
+			if (cond(r)) return r;
+		}
+	}
+	on(f: (x: T) => void): Disposable {
+		this.#listeners.add(f);
+		return { [Symbol.dispose]: () => this.#listeners.delete(f) };
+	}
+	emit(x: T) {
+		this.#listeners.forEach(y => y(x));
+	}
+}
+
+export class Mutable<T> {
+	#current: T;
+	change = new EventEmitter<T>();
+	get v() {
+		return this.#current;
+	}
+	set v(newValue: T) {
+		this.#current = newValue;
+		this.change.emit(newValue);
+	}
+	constructor(init: T) {
+		this.#current = init;
+	}
+}
+
+export const propertiesChanged = new EventEmitter<Partial<ContestProperties>>();
+
 export async function getProperties(trx: DBTransaction): Promise<Partial<ContestProperties>> {
 	const out: Partial<ContestProperties> = {};
 	const rows = await trx.selectFrom("properties").selectAll().execute();
@@ -230,4 +293,5 @@ export async function setProperty<T extends keyof ContestProperties>(
 	await trx.insertInto("properties").values({ key: prop, value: valueStr }).onConflict(c =>
 		c.doUpdateSet({ value: valueStr })
 	).execute();
+	propertiesChanged.emit(await getProperties(trx));
 }
