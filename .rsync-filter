@@ -1,0 +1,11 @@
++ /scripts/.env
++ /devdocs/public
+- .git
+:-sr .gitignore
+-r data.json
+- .gitignore
+-sr /devdocs/tmp/
+-sr node_modules/
+-sr server/screenshots/
+-sr server/db.sqlite
+-sr client/

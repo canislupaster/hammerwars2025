@@ -214,8 +214,11 @@ function InnerApp() {
 	const [oldRoute, setOldRoute] = useState<string | null>(null);
 	const errorShown = useRef(false);
 	const errorPath = "/error";
+
 	const [err, resetErr] = useErrorBoundary(err => {
 		console.error("app error boundary", err);
+		if (import.meta.env.DEV) return;
+
 		setOldRoute(loc.url);
 		errorShown.current = true;
 		loc.route(errorPath);

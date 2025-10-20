@@ -1,22 +1,21 @@
 import { SendEmailCommand } from "@aws-sdk/client-ses";
 import { Hono } from "hono";
 import { Buffer } from "node:buffer";
-import { randomInt } from "node:crypto";
+import { randomInt, timingSafeEqual } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { Readable } from "node:stream";
 import sharp from "sharp";
 import z from "zod";
 import { randomShirtSeed } from "../shared/genshirt.ts";
-import { API, ContestProperties, fill, getTeamLogoURL, logoMaxSize, maxPromptLength, resumeMaxSize,
-	screenshotMaxWidth, shirtSizes, TeamContestProperties, UserInfo, validDiscordRe,
-	validNameRe } from "../shared/util.ts";
+import { API, ContestProperties, DOMJudgeActiveContest, fill, getTeamLogoURL, logoMaxSize,
+	maxPromptLength, resumeMaxSize, screenshotMaxWidth, shirtSizes, TeamContestProperties, teamLimit,
+	UserInfo, validDiscordRe, validNameRe } from "../shared/util.ts";
 import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getProperty,
 	propertiesChanged, setDb, setProperty, transaction, updateDb, UserData } from "./db.ts";
-import { DOMJudge } from "./domjudge.ts";
+import { domJudge } from "./domjudge.ts";
 import { makeVerificationEmail } from "./email.ts";
-import { auth, Context, doHash, err, genKey, HonoEnv, keyAuth, makeRoute, openai, rootUrl,
-	sesClient } from "./main.ts";
+import { auth, Context, env, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai,
+	rootUrl, sesClient } from "./main.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
@@ -51,8 +50,6 @@ const partialUserInfoSchema = z.object({
 
 export async function makeRoutes(app: Hono<HonoEnv>) {
 	const teamChanged = new EventEmitter<number>();
-	const domJudge = new DOMJudge();
-	domJudge.start();
 
 	makeRoute(app, "register", {
 		validator: z.object({ email: z.email() }),
@@ -69,30 +66,34 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 				return (await trx.insertInto("emailVerification").returning("id").values({
 					email: req.email,
-					key: doHash(verifyKey),
+					key: verifyKey,
 				}).executeTakeFirstOrThrow()).id;
 			});
 
 			if (newId != null) {
 				const url = new URL("/verify", rootUrl);
 				url.searchParams.append("id", newId.toString());
-				url.searchParams.append("key", verifyKey);
+				url.searchParams.append("key", verifyKey.toString("hex"));
 
-				const response = await sesClient.send(
-					new SendEmailCommand({
-						Destination: { ToAddresses: [req.email], CcAddresses: [], BccAddresses: [] },
-						Source: "noreply@email.purduecpu.com",
-						Message: {
-							Subject: {
-								Charset: "UTF-8",
-								Data: "HammerWars 2025: Finish setting up your account",
+				if (env["NOSEND_EMAIL"] == "1") {
+					console.log(`${req.email} verification link: ${url.href}`);
+				} else {
+					const response = await sesClient.send(
+						new SendEmailCommand({
+							Destination: { ToAddresses: [req.email], CcAddresses: [], BccAddresses: [] },
+							Source: "noreply@email.purduecpu.com",
+							Message: {
+								Subject: {
+									Charset: "UTF-8",
+									Data: "HammerWars 2025: Finish setting up your account",
+								},
+								Body: { Html: { Charset: "UTF-8", Data: makeVerificationEmail(url.href) } },
 							},
-							Body: { Html: { Charset: "UTF-8", Data: makeVerificationEmail(url.href) } },
-						},
-					}),
-				);
+						}),
+					);
 
-				console.log(`sent to ${req.email} (id ${response.MessageId})`);
+					console.log(`sent to ${req.email} (id ${response.MessageId})`);
+				}
 			}
 
 			return newId == null ? "alreadySent" : "sent";
@@ -100,10 +101,11 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	});
 
 	makeRoute(app, "checkEmailVerify", {
-		validator: z.object({ id: z.number(), key: z.string() }),
+		validator: z.object({ id: z.number(), key: z.hex() }),
 		handler: async (_c, req) => {
 			return await transaction(async trx => {
-				return (await getDb(trx, "emailVerification", req.id))?.key == doHash(req.key);
+				const verify = await getDb(trx, "emailVerification", req.id);
+				return verify != null && timingSafeEqual(verify.key, Buffer.from(req.key, "hex"));
 			});
 		},
 	});
@@ -113,10 +115,10 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		const sesId = await setDb(trx, "session", null, {
 			user: userId,
 			created: Date.now(),
-			key: doHash(sesKey),
+			key: sesKey,
 		});
 
-		c.set("session", { id: sesId, key: sesKey });
+		c.set("session", { id: sesId, key: sesKey.toString("hex") });
 	}
 
 	function removeSession(c: Context) {
@@ -124,26 +126,26 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	}
 
 	makeRoute(app, "createAccount", {
-		validator: z.object({ id: z.number(), key: z.string(), password: passwordSchema }),
+		validator: z.object({ id: z.number(), key: z.hex(), password: passwordSchema }),
 		handler: async (c, req) => {
 			return await transaction(async trx => {
 				const row = await trx.selectFrom("emailVerification").selectAll().where("id", "==", req.id)
 					.executeTakeFirst();
-				if (row?.key != doHash(req.key)) throw err("Invalid verification key");
+				if (row == null || !timingSafeEqual(row.key, Buffer.from(req.key, "hex"))) {
+					throw err("Invalid verification key");
+				}
 
 				const prevUser = await trx.selectFrom("user").select("id").where("email", "=", row.email)
 					.executeTakeFirst();
 
 				let userId: number;
-				const salt = genKey();
-				const saltHash = { passwordSalt: salt, passwordHash: doHash(req.password, salt) };
-
+				const passwordHash = await getKey(req.password);
 				if (prevUser) {
 					await updateDb(
 						trx,
 						"user",
 						prevUser.id,
-						async o => ({ ...o, data: { ...o.data, ...saltHash } }),
+						async o => ({ ...o, data: { ...o.data, passwordHash } }),
 					);
 					userId = prevUser.id;
 				} else {
@@ -157,7 +159,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 						},
 						submitted: null,
 						lastEdited: Date.now(),
-						...saltHash,
+						passwordHash,
 					};
 					userId = await setDb(trx, "user", null, { email: row.email, team: null, data });
 				}
@@ -169,13 +171,14 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 	makeRoute(app, "login", {
 		validator: z.object({ email: z.email(), password: passwordSchema }),
+		ratelimit: { times: 5, durationMs: 5000 },
 		handler: async (c, req) => {
 			return await transaction(async trx => {
 				const row = await trx.selectFrom("user").select("id").where("email", "=", req.email)
 					.executeTakeFirst();
 				if (!row) return "incorrect";
 				const u = await getDbCheck(trx, "user", row.id);
-				if (doHash(req.password, u.data.passwordSalt) != u.data.passwordHash) return "incorrect";
+				if (!await matchKey(u.data.passwordHash, req.password)) return "incorrect";
 				await makeSession(c, trx, row.id);
 				return null;
 			});
@@ -194,7 +197,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					userId,
 					async old => ({
 						...old,
-						data: { ...old.data, passwordHash: doHash(req.newPassword, salt), passwordSalt: salt },
+						data: { ...old.data, passwordHash: await getKey(req.newPassword), passwordSalt: salt },
 					}),
 				);
 
@@ -236,6 +239,16 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		},
 	});
 
+	const checkRegistrationOpen = async (trx: DBTransaction) => {
+		if (await getProperty(trx, "registrationOpen") != true) {
+			throw err("Registration is not open");
+		}
+		const ends = await getProperty(trx, "registrationEnds");
+		if (ends != null && Date.now() >= ends) {
+			throw err("Registration has ended");
+		}
+	};
+
 	makeRoute(app, "updateInfo", {
 		validator: z.object({
 			info: partialUserInfoSchema,
@@ -254,13 +267,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 					let submitted: UserInfo | null = null;
 					if (req.submit) {
-						if (await getProperty(trx, "registrationOpen") != true) {
-							throw err("Registration is not open");
-						}
-						const ends = await getProperty(trx, "registrationEnds");
-						if (ends != null && Date.now() >= ends) {
-							throw err("Registration has ended");
-						}
+						await checkRegistrationOpen(trx);
 						const parsed = userInfoSchema.safeParse(req.info);
 						if (!parsed.success) throw err("Can't submit: not fully filled out");
 						if (parsed.data.inPerson) {
@@ -314,6 +321,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		handler: async (c, req) => {
 			const userId = await auth(c);
 			await transaction(async trx => {
+				await checkRegistrationOpen(trx);
 				const u = await getDb(trx, "user", userId);
 				if (u == null) throw err("user does not exist");
 
@@ -349,16 +357,22 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		ratelimit: { times: 5, durationMs: 5000 },
 		handler: async (c, req) => {
 			const userId = await auth(c);
-			await transaction(async trx => {
+			const ret = await transaction(async trx => {
+				await checkRegistrationOpen(trx);
 				if ((await getDbCheck(trx, "user", userId)).team != null) {
 					throw err("You need to leave your team first");
 				}
 				const team = await trx.selectFrom("team").selectAll().where("joinCode", "==", req.joinCode)
 					.executeTakeFirst();
 				if (!team) throw err("Invalid join code.");
+				if ((await getMembers(trx, team.id)).length+1 > teamLimit) {
+					return { full: true };
+				}
 				await setDb(trx, "user", userId, { team: team.id });
+				return { full: false };
 			});
 			domJudge.updateTeams();
+			return ret;
 		},
 	});
 
@@ -366,6 +380,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		handler: async c => {
 			const userId = await auth(c);
 			await transaction(async trx => {
+				await checkRegistrationOpen(trx);
 				const u = await getDb(trx, "user", userId);
 				if (u?.team == null) throw err("User is not in a team");
 				await setDb(trx, "user", userId, { team: null });
@@ -376,6 +391,14 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			domJudge.updateTeams();
 		},
 	});
+
+	const getMembers = async (trx: DBTransaction, teamId: number) => {
+		return await Promise.all(
+			(await trx.selectFrom("user").select("id").where("team", "=", teamId).execute()).map(v =>
+				getDbCheck(trx, "user", v.id)
+			),
+		);
+	};
 
 	makeRoute(app, "getInfo", {
 		handler: async c => {
@@ -404,6 +427,12 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 							logo: logo != null ? getTeamLogoURL(logo.id) : null,
 							joinCode: teamData.joinCode,
 							name: teamData.name,
+							members: (await getMembers(trx, team)).map(v => ({
+								email: v.email,
+								name: v.data.info.name ?? null,
+								id: v.id,
+								inPerson: v.data.submitted ? v.data.submitted.inPerson != null : null,
+							})),
 						},
 					};
 				}
@@ -424,16 +453,21 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 	makeRoute(app, "getProperties", {
 		async handler(c) {
-			await keyAuth(c);
+			await keyAuth(c, true);
 			return await transaction(trx => getProperties(trx));
 		},
 	});
 
 	makeRoute(app, "setProperties", {
 		validator: z.object({
-			registrationEnds: z.number(),
+			registrationEnds: z.number().nullable(),
 			registrationOpen: z.boolean(),
-			internetAccessAllowed: z.boolean(),
+			domJudgeCid: z.string(),
+			team: z.object({
+				firewallEnabled: z.boolean(),
+				screenshotsEnabled: z.boolean(),
+				visibleDirectories: z.string().array(),
+			}),
 		}).partial().strip(),
 		async handler(c, req) {
 			await keyAuth(c, true);
@@ -441,7 +475,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				// zod strips unknown keys
 				for (const k in req) {
 					const contestKey = k as keyof ContestProperties;
-					if (req[contestKey] != undefined) {
+					// null !== undefined
+					if (req[contestKey] !== undefined) {
 						await setProperty(trx, contestKey, req[contestKey]);
 					}
 				}
@@ -467,6 +502,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		async handler(c, req) {
 			const userId = await auth(c);
 			const [teamId, teamName] = await transaction(async trx => {
+				await checkRegistrationOpen(trx);
 				const teamId = (await getDbCheck(trx, "user", userId)).team;
 				if (teamId == null) throw err("user not in a team");
 				return [teamId, (await getDbCheck(trx, "team", teamId)).name] as const;
@@ -490,8 +526,22 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		const idInt = Number.parseInt(id);
 		if (!isFinite(idInt)) throw err("invalid id");
 		const data = await transaction(trx => getDbCheck(trx, "teamLogo", idInt));
-		return c.body(Readable.toWeb(Readable.from(data.logo)), 200, { "Content-Type": data.logoMime });
+		return c.body(new Uint8Array(data.logo), 200, { "Content-Type": data.logoMime });
 	});
+
+	const toAdminTeam = async (trx: DBTransaction, id: number) => {
+		const team = await getDbCheck(trx, "team", id);
+		const logo = await trx.selectFrom("teamLogo").select("id").where("team", "=", team.id)
+			.executeTakeFirst();
+		return {
+			id: team.id,
+			name: team.name,
+			logoId: logo?.id ?? null,
+			domJudgeId: team.domJudgeId,
+			domJudgePassword: team.domJudgePassword,
+			joinCode: team.joinCode,
+		};
+	};
 
 	makeRoute(app, "allData", {
 		async handler(c) {
@@ -510,17 +560,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 						resumeId: resume?.id ?? null,
 					});
 				}
-				for (const team of await trx.selectFrom("team").selectAll().execute()) {
-					const logo = await trx.selectFrom("teamLogo").select("id").where("team", "=", team.id)
-						.executeTakeFirst();
-					out.teams.push({
-						id: team.id,
-						name: team.name,
-						logoId: logo?.id ?? null,
-						domJudgeId: team.domJudgeId,
-						domJudgePassword: team.domJudgePassword,
-						joinCode: team.joinCode,
-					});
+				for (const team of await trx.selectFrom("team").select("id").execute()) {
+					out.teams.push(await toAdminTeam(trx, team.id));
 				}
 				return out;
 			});
@@ -571,7 +612,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		},
 	});
 
-	makeRoute(app, "getTeamLogoId", {
+	makeRoute(app, "getTeamLogo", {
 		validator: z.object({ id: z.number() }),
 		async handler(c, { id }) {
 			await keyAuth(c, true);
@@ -585,11 +626,11 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	makeRoute(app, "scoreboard", {
 		feed: true,
 		handler: async function* handler(api) {
-			yield domJudge.scoreboard;
+			yield domJudge.scoreboard.v;
 			const abort = new AbortController();
 			api.onAbort(() => abort.abort());
 			while (!abort.signal.aborted) {
-				const sc = await domJudge.scoreboardUpdates.wait(abort.signal);
+				const sc = await domJudge.scoreboard.change.wait(abort.signal);
 				if (sc == null) return;
 				yield sc;
 			}
@@ -612,15 +653,20 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					: null;
 			};
 
-			const emitter = new EventEmitter<
-				{ type: "cred" } | { type: "props"; props: TeamContestProperties }
-			>();
+			type Update = { type: "cred" } | { type: "active"; active: DOMJudgeActiveContest } | {
+				type: "props";
+				props: TeamContestProperties;
+			};
+
+			const emitter = new EventEmitter<Update>();
 
 			this.use(teamChanged.on(v => {
 				if (v == id) emitter.emit({ type: "cred" });
 			}));
 
-			const defaultTeamProps = {
+			this.use(domJudge.activeContest.change.on(v => emitter.emit({ type: "active", active: v })));
+
+			const defaultTeamProps: TeamContestProperties = {
 				firewallEnabled: false,
 				screenshotsEnabled: false,
 				visibleDirectories: [],
@@ -633,22 +679,31 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			const abort = new AbortController();
 			api.onAbort(() => abort.abort());
 
+			const queue: (typeof emitter extends EventEmitter<infer T> ? T : never)[] = [];
+
+			// if i just wait there's a race thing which is really dumb
+			this.use(emitter.on(update => queue.push(update)));
 			const state = {
 				domJudgeCredentials: await getCred(),
+				domJudgeActiveContest: domJudge.activeContest.v,
 				teamProperties: (await transaction(trx => getProperties(trx))).team ?? defaultTeamProps,
 			};
 
 			while (!abort.signal.aborted) {
 				yield { type: "update", state };
-				const ev = await emitter.wait();
-				if (ev == null) break;
+				const ev = queue.pop();
+				if (ev == undefined) {
+					await emitter.wait();
+					continue;
+				}
 				if (ev.type == "cred") state.domJudgeCredentials = await getCred();
+				else if (ev.type == "active") state.domJudgeActiveContest = ev.active;
 				else state.teamProperties = ev.props;
 			}
 		},
 	});
 
-	const screenshotPath = process.env["SCREENSHOT_PATH"];
+	const screenshotPath = env.SCREENSHOT_PATH;
 	if (screenshotPath != undefined && !(await stat(screenshotPath)).isDirectory()) {
 		throw new Error("screenshot path should be a directory");
 	}
@@ -659,11 +714,19 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			await keyAuth(c, false);
 			if (screenshotPath == undefined) return;
 			const t = Date.now();
-			const path = join(screenshotPath, `${team}-${t}.png`);
+			const path = join(screenshotPath, `${team}-${t}.avif`);
 			await sharp(Buffer.from(data, "base64")).resize(screenshotMaxWidth, null, {
 				withoutEnlargement: true,
-			}).heif().toFile(path);
-			await transaction(trx => setDb(trx, "teamScreenshot", null, { team, path, mac }));
+			}).heif({ compression: "av1" }).toFile(path);
+			await transaction(trx => setDb(trx, "teamScreenshot", null, { team, path, mac, time: t }));
+		},
+	});
+
+	makeRoute(app, "teamInfo", {
+		validator: z.object({ id: z.int() }),
+		async handler(c, { id }) {
+			await keyAuth(c, false);
+			return await transaction(trx => toAdminTeam(trx, id));
 		},
 	});
 }

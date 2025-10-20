@@ -57,7 +57,7 @@ export const borderColor = {
 };
 
 export const outlineColor = {
-	default: "active:outline valid:theme:outline-blue-500 outline-offset-[-1px]",
+	default: "active:outline theme:outline-blue-500 outline-offset-[-1px]",
 };
 
 export const containerDefault =
@@ -176,7 +176,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 					interactiveContainerDefault,
 				),
 				className,
-			)} disabled={loading == true} {...props}>
+			)} {...props} disabled={loading == true || props.disabled == true}>
 			{loading == true && <ThemeSpinner size="sm" />}
 			{icon}
 			{props.children}
@@ -206,7 +206,7 @@ type AnchorProps = JSX.IntrinsicHTMLElements["a"] & ShortcutsProps & { className
 export const anchorHover =
 	"transition-all hover:text-black dark:hover:text-gray-50 hover:bg-cyan-100/5 enabled:cursor-pointer";
 export const anchorUnderline =
-	"text-gray-600 dark:text-zinc-50 inline-flex flex-row align-baseline items-baseline gap-1 underline decoration-dashed decoration-1 underline-offset-2";
+	"text-gray-600 dark:text-zinc-50 underline decoration-dashed decoration-1 underline-offset-2";
 export const anchorStyle = twJoin(anchorHover, anchorUnderline);
 
 export const Anchor = forwardRef<HTMLAnchorElement, AnchorProps>(
@@ -236,9 +236,9 @@ export const LinkButton = (
 	</a>;
 
 export const ThemeSpinner = (
-	{ className, size }: { className?: string; size?: "sm" | "md" | "lg" },
+	{ className, size }: { className?: string; size?: "sm" | "md" | "lg" | number },
 ) =>
-	<IconLoader2 size={{ sm: 24, md: 36, lg: 72 }[size ?? "md"]}
+	<IconLoader2 size={typeof size == "number" ? size : { sm: 24, md: 36, lg: 72 }[size ?? "md"]}
 		className={twMerge(
 			`animate-spin stroke-${
 				{ sm: 1, md: 2, lg: 3 }[size ?? "md"]
@@ -1389,9 +1389,9 @@ export function useDisposable(effect: () => Disposable | undefined, deps?: unkno
 export type SetFn<T> = (cb: (old: T) => T) => void;
 
 export function ConfirmModal(
-	{ title, actionName, msg, open, onClose, confirm, defaultYes }: {
+	{ title, actionName, children, open, onClose, confirm, defaultYes }: {
 		title?: string;
-		msg: ComponentChildren;
+		children?: ComponentChildren;
 		open: boolean;
 		onClose: () => void;
 		confirm: () => void;
@@ -1406,7 +1406,7 @@ export function ConfirmModal(
 			if (defaultYes == true) confirm();
 			onClose();
 		}} className="contents">
-			<Text>{msg}</Text>
+			{children}
 			<div className="flex flex-row gap-2">
 				<Button className={bgColor.red} onClick={() => {
 					onClose();
@@ -1439,9 +1439,8 @@ export function AlertErrorBoundary({ children }: { children?: ComponentChildren 
 	return children;
 }
 
-export function ease(t: number) {
-	const a = t*t*(3-2*t);
-	return a*a/2+0.5-(1-a)*(1-a)/2;
+export function ease(x: number): number {
+	return x < 0.5 ? 16*x*x*x*x*x : 1-Math.pow(-2*x+2, 5)/2;
 }
 
 export function useValidity(
@@ -1542,13 +1541,18 @@ export function Checkbox(
 	</label>;
 }
 
-export function Countdown({ until }: { until: number }) {
+export function useTimeUntil(until: number | null) {
 	const [time, setTime] = useState<null | number>(null);
 	useEffect(() => {
+		if (until == null) {
+			setTime(null);
+			return;
+		}
+
 		let curTimeout: number | null = null;
 		const untilNext = () => {
 			const nxt = 1001-(Date.now()%1000); // should be strictly in the next second... 1ms delay
-			setTime(Math.floor(until-Date.now()/1000));
+			setTime(Math.floor((until-Date.now())/1000));
 			curTimeout = setTimeout(untilNext, nxt);
 		};
 
@@ -1557,24 +1561,39 @@ export function Countdown({ until }: { until: number }) {
 			if (curTimeout != null) clearTimeout(curTimeout);
 		};
 	}, [until]);
+	return time;
+}
 
+export function Countdown({ time, inline }: { time: number | null; inline?: boolean }) {
 	if (time == null || time < 0) return [];
 	const day = Math.floor(time/(3600*24)),
 		hr = Math.floor(time/3600)%24,
 		min = Math.floor(time/60)%60,
 		sec = time%60;
-
-	return ([[day, "Day"], [hr, "Hour"], [min, "Minute"], [sec, "Second"]] satisfies [
+	const d = [[day, "Day"], [hr, "Hour"], [min, "Minute"], [sec, "Second"]] satisfies [
 		number,
 		string,
-	][]).map(([qty, name], i) =>
-		<div className="flex flex-col gap-1 items-center justify-between" key={name}>
-			<div className={twJoin(chipColors[chipColorKeys[i]], "p-2 px-3 rounded-md shadow-md")}>
-				<Text v="md">{qty < 10 ? `0${qty}` : qty}</Text>
+	][];
+	if (inline == true) {
+		let f = false;
+		return d.map(v => {
+			if (v[0] == 0 && !f) return "";
+			let a = v[0].toString();
+			if (f) a = `:${a.padStart(2, "0")}`;
+			f = true;
+			return a;
+		}).join("");
+	}
+	return <div className="flex flex-row gap-2 justify-evenly max-w-xs self-center">
+		{d.map(([qty, name], i) =>
+			<div className="flex flex-col gap-1 items-center justify-between" key={name}>
+				<div className={twJoin(chipColors[chipColorKeys[i]], "p-2 px-3 rounded-md shadow-md")}>
+					<Text v="md">{qty < 10 ? `0${qty}` : qty}</Text>
+				</div>
+				<Text v="sm">{name}{qty != 1 ? "s" : ""}</Text>
 			</div>
-			<Text v="sm">{name}{qty != 1 ? "s" : ""}</Text>
-		</div>
-	);
+		)}
+	</div>;
 }
 
 export function FileInput(

@@ -2,9 +2,15 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "deploy",
+			"label": "deploy (server)",
 			"type": "shell",
 			"command": "zsh ./deploy.sh",
+			"problemMatcher": []
+		},
+		{
+			"label": "deploy (daemon)",
+			"type": "shell",
+			"command": "zsh ./deploy-daemon.sh",
 			"problemMatcher": []
 		}
 	]

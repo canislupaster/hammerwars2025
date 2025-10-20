@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { API, APIClient, APIError, APIRequest, APIRequestParameters, NonFeedAPI, parseExtra,
+import { API, APIClient, APIError, APIRequest, APIRequestBase, FeedAPI, NonFeedAPI, parseExtra,
 	ServerResponse, Session, stringifyExtra } from "../../shared/util";
+import { useAsync } from "./ui";
 
 export type LocalStorage = Partial<{ session: Session }> & { toJSON(): unknown };
 const localStorageKeys: (Exclude<keyof LocalStorage, "toJSON">)[] = ["session"];
@@ -67,7 +68,7 @@ export function useRequest<T extends keyof NonFeedAPI, Throw extends boolean = t
 			T,
 			Throw
 		>["request"];
-		apiClient.request<T>(...[route, ...params] as unknown as APIRequestParameters[T]).then(v => {
+		apiClient.request<T>(route, ...params).then(v => {
 			const current: ServerResponse<T> & { type: "ok" } = { type: "ok", data: v };
 			setCurrent({ current, request });
 			handlerRef.current?.(current);
@@ -112,4 +113,44 @@ export function useRequest<T extends keyof NonFeedAPI, Throw extends boolean = t
 		loading,
 		reset,
 	]);
+}
+
+class FeedAbortError extends Error {}
+export function useFeed<T extends keyof FeedAPI>(
+	route: T,
+	onUpdate: (x: FeedAPI[T]["response"]) => void,
+	...params: APIRequestBase<T>
+) {
+	const onUpdateRef = useRef(onUpdate);
+	useEffect(() => {
+		onUpdateRef.current = onUpdate;
+	}, [onUpdate]);
+	const [signal, setSignal] = useState<AbortSignal | null>(null);
+	useEffect(() => {
+		const controller = new AbortController();
+		setSignal(controller.signal);
+		return () => {
+			controller.abort(new FeedAbortError());
+			setSignal(null);
+		};
+	}, []);
+	const async = useAsync(
+		useCallback(async () => {
+			if (signal == null) return;
+			try {
+				console.log(`connecting to ${route}`);
+				for await (const update of apiClient.feed(route, ...params, signal)) {
+					onUpdateRef.current(update as FeedAPI[T]["response"]);
+				}
+				console.log(`disconnected from ${route}`);
+			} catch (e) {
+				if (e instanceof FeedAbortError) return;
+				throw e;
+			}
+		}, [params, route, signal]),
+		{ propagateError: true },
+	);
+	useEffect(() => {
+		if (signal != null && !async.attempted) async.run();
+	}, [async, signal]);
 }

@@ -3,15 +3,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { twJoin } from "tailwind-merge";
 import { randomShirtSeed } from "../../shared/genshirt";
 import { API, joinCodeRe, logoMaxSize, logoMimeTypes, maxPromptLength, PartialUserInfo,
-	resumeMaxSize, ServerResponse, shirtSizes, UserInfo, validDiscordRe,
+	resumeMaxSize, ServerResponse, shirtSizes, teamLimit, UserInfo, validDiscordRe,
 	validNameRe } from "../../shared/util";
 import { apiBaseUrl, apiClient, useRequest } from "./clientutil";
 import type { GenShirtMessage, GenShirtResponse } from "./genshirtworker";
 import GenShirtWorker from "./genShirtWorker?worker";
 import { MainContainer } from "./main";
 import { Alert, Anchor, AppTooltip, bgColor, borderColor, Button, Card, Checkbox, Collapse,
-	Countdown, Divider, FileInput, IconButton, Input, Loading, Modal, Select, Text, Textarea,
-	ThemeSpinner, useDebounce, useGoto, useToast, useValidity } from "./ui";
+	ConfirmModal, containerDefault, Countdown, Divider, FileInput, IconButton, Input, Loading, Modal,
+	Select, Text, Textarea, ThemeSpinner, useDebounce, useGoto, useTimeUntil, useToast,
+	useValidity } from "./ui";
 
 const toBase64 = (file: File) =>
 	new Promise<string>((res, rej) => {
@@ -24,7 +25,7 @@ const toBase64 = (file: File) =>
 		reader.readAsDataURL(file);
 	});
 
-function GenerateTeamLogo({ refresh }: { refresh: () => void }) {
+function GenerateTeamLogo({ refresh, disabled }: { refresh: () => void; disabled?: boolean }) {
 	const [generateLogoOpen, setGenerateLogoOpen] = useState(false);
 	const generateTeamLogo = useRequest({
 		route: "generateLogo",
@@ -58,7 +59,7 @@ function GenerateTeamLogo({ refresh }: { refresh: () => void }) {
 			</form>
 		</Modal>
 
-		<Button onClick={() => {
+		<Button disabled={disabled} onClick={() => {
 			setGenerateLogoOpen(true);
 		}}>
 			Generate logo
@@ -169,7 +170,7 @@ export function RegistrationEditor() {
 	const window = useRequest({ route: "registrationWindow", initRequest: true });
 
 	const infoCall = info.call;
-	const refresh = useCallback((x: ServerResponse<keyof API>) => {
+	const refresh = useCallback((x: { type: string }) => {
 		if (x.type == "ok") infoCall();
 	}, [infoCall]);
 
@@ -199,7 +200,14 @@ export function RegistrationEditor() {
 
 	const updateTeam = useRequest({ route: "setTeam", handler: refresh });
 
-	const joinTeam = useRequest({ route: "joinTeam", handler: refresh });
+	const [teamFull, setTeamFull] = useState(false);
+	const joinTeam = useRequest({
+		route: "joinTeam",
+		handler: r => {
+			if (r.type == "ok" && r.data.full) setTeamFull(true);
+			else refresh(r);
+		},
+	});
 	const leaveTeam = useRequest({ route: "leaveTeam", handler: refresh });
 	const [newPass, setNewPass] = useState<string>("");
 	const changePassword = useRequest({
@@ -234,6 +242,7 @@ export function RegistrationEditor() {
 	const [joinTeamCode, setJoinTeamCode] = useState("");
 
 	const [deleteUserOpen, setDeleteUserOpen] = useState(false);
+	const [unsubmitOpen, setUnsubmitOpen] = useState(false);
 
 	const loading = info.loading || updateInfo.loading || updateTeam.loading || leaveTeam.loading
 		|| joinTeam.loading || changePassword.loading || updateResume.loading;
@@ -265,7 +274,7 @@ export function RegistrationEditor() {
 			sandwich: userInfo?.inPerson != null && userInfo.inPerson.sandwich == undefined,
 			shirtSize: userInfo?.inPerson != null && userInfo.inPerson.shirtSize == undefined,
 			resume: userInfo?.inPerson != null && data?.hasResume != true,
-			rules: data?.info.inPerson == null && data?.info.agreeRules != true,
+			rules: userInfo?.inPerson == null && userInfo?.agreeRules != true,
 		} as const),
 		[userInfo, data],
 	);
@@ -273,8 +282,13 @@ export function RegistrationEditor() {
 		showMissing && missing[x]
 		&& <Alert bad title={`${name} is required`} txt="Please specify it before submitting." />;
 	const anyMissing = Object.values(missing).some(x => x);
+	console.log(missing, data);
 
 	const toast = useToast();
+
+	const untilClose = useTimeUntil(
+		window.current?.data.closes != null ? window.current.data.closes/1000 : null,
+	);
 
 	if (data == null || userInfo == null || window.current == null || hasClosed == null) {
 		return <Loading />;
@@ -295,6 +309,9 @@ export function RegistrationEditor() {
 		}
 	};
 
+	const inPersonMember = team?.members.find(x => x.inPerson == true);
+	const virtualMember = team?.members.find(x => x.inPerson == false);
+
 	return <MainContainer>
 		<Card className="w-full max-w-2xl gap-3">
 			<Text v="lg">User information</Text>
@@ -303,11 +320,9 @@ export function RegistrationEditor() {
 				: <>
 					{data.submitted
 						&& <Alert title="Unsubmit to edit your information" txt="Don't forget to resubmit!" />}
-					{window.current.data.closes != null && <>
+					{untilClose != null && untilClose > 0 && <>
 						<Text v="bold">Registration closes in</Text>
-						<div className="flex flex-row gap-2 justify-evenly max-w-xs self-center">
-							<Countdown until={window.current.data.closes/1000} />
-						</div>
+						<Countdown time={untilClose} />
 					</>}
 				</>}
 			<form ref={formRef} onSubmit={ev => {
@@ -414,11 +429,12 @@ export function RegistrationEditor() {
 								{makeMissingAlert("shirtSize", "Shirt size")}
 							</div>
 
-							<ShirtPreview info={{ info: userInfo, team }} setSeed={s => {
-								modInfo("shirtSeed", s);
-							}} setHue={h => {
-								modInfo("shirtHue", h);
-							}} />
+							{userInfo.inPerson.shirtSize != "none"
+								&& <ShirtPreview info={{ info: userInfo, team }} setSeed={s => {
+									modInfo("shirtSeed", s);
+								}} setHue={h => {
+									modInfo("shirtHue", h);
+								}} />}
 						</div>)}
 
 					{userInfo.inPerson == null && <>
@@ -441,17 +457,27 @@ export function RegistrationEditor() {
 						{makeMissingAlert("rules", "Your consent to rules")}
 					</>}
 				</div>
+
+				<ConfirmModal open={unsubmitOpen} onClose={() => setUnsubmitOpen(false)} confirm={() => {
+					updateInfo.call({ info: userInfo, submit: false });
+				}} actionName="Unsubmit" title="Are you sure you want to unsubmit?">
+					<Text>
+						You won't be registered for the event anymore or be allowed to reregister, since
+						registration has closed.
+					</Text>
+				</ConfirmModal>
+
 				{data.submitted
 					? <div className="flex flex-row gap-2 items-center mt-5">
 						<Button loading={loading} onClick={() => {
-							updateInfo.call({ info: userInfo, submit: false });
+							if (registrationClosed) setUnsubmitOpen(true);
+							else updateInfo.call({ info: userInfo, submit: false });
 						}} className={bgColor.sky}>
 							Unsubmit
 						</Button>
 					</div>
 					: <div className="flex flex-row gap-2 items-center mt-5">
-						<Button loading={loading} disabled={loading || registrationClosed}
-							className={bgColor.green}>
+						<Button loading={loading} disabled={registrationClosed} className={bgColor.green}>
 							Submit
 						</Button>
 						<AppTooltip content="Use this option if you'd like to submit your information later.">
@@ -474,6 +500,17 @@ export function RegistrationEditor() {
 		<Card className="w-full max-w-2xl gap-3">
 			<Text v="lg">Team management</Text>
 
+			{registrationClosed ? <Alert title="Registration has closed" txt="Teams are locked." /> : <>
+				<Text>
+					Teams will be locked when registration closes. If you need help finding a team, just ask
+					in our <Anchor href="https://purduecpu.com/discord">Discord server.</Anchor>
+				</Text>
+
+				{team == null && data.submitted
+					&& <Alert bad title="You must be in a team to participate."
+						txt="Please create or join a team. If you want to go solo, make a 1-person team." />}
+			</>}
+
 			<Modal open={createTeamOpen} onClose={() => setCreateTeamOpen(false)} title="Create team">
 				<form onSubmit={ev => {
 					ev.preventDefault();
@@ -487,6 +524,10 @@ export function RegistrationEditor() {
 						pattern={validNameRe} />
 					<Button>Create team</Button>
 				</form>
+			</Modal>
+
+			<Modal open={teamFull} onClose={() => setTeamFull(false)} title="Team is full" bad>
+				That team already has {teamLimit} members!
 			</Modal>
 
 			<Modal open={joinTeamOpen} onClose={() => setJoinTeamOpen(false)} title="Join team">
@@ -505,13 +546,28 @@ export function RegistrationEditor() {
 
 			{team
 				? <div className="flex flex-col gap-3 max-w-xl">
+					{virtualMember && inPersonMember
+						&& <Alert bad title="Inconsistent attendance modality" txt={
+							<>
+								<p>
+									{virtualMember.email} is participating virtually but {inPersonMember.email}{" "}
+									is participating in person.
+								</p>
+								<p>
+									All members of a team must participate together. Please ensure your members have
+									registered correctly
+								</p>
+							</>
+						} />}
+
 					<div className="flex flex-col gap-1">
 						<Text>Team name</Text>
-						<Input disabled={loading} required {...teamNameValidity} pattern={validNameRe}
-							onBlur={ev => {
-								teamNameValidity.onBlur(ev);
-								if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
-							}} />
+						<Input disabled={loading} readonly={registrationClosed} required {...teamNameValidity}
+							pattern={validNameRe} onBlur={ev => {
+							if (registrationClosed) return;
+							teamNameValidity.onBlur(ev);
+							if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
+						}} />
 					</div>
 
 					{team.logo == null
@@ -520,7 +576,8 @@ export function RegistrationEditor() {
 						: <div className="flex flex-col gap-2">
 							<img src={new URL(team.logo, apiBaseUrl).href}
 								className="max-h-32 object-contain rounded" />
-							<Button onClick={() => updateTeam.call({ name: team.name, logo: "remove" })}>
+							<Button disabled={registrationClosed}
+								onClick={() => updateTeam.call({ name: team.name, logo: "remove" })}>
 								Remove logo
 							</Button>
 						</div>}
@@ -530,15 +587,16 @@ export function RegistrationEditor() {
 						Your image will be cropped to fit in a square. (Ideally, you should use a square image.)
 					</Text>
 					<div className="flex flex-row gap-2">
-						<FileInput maxSize={logoMaxSize} mimeTypes={logoMimeTypes} onUpload={file => {
-							void toBase64(file).then(base64 =>
-								updateTeam.call({
-									name: team.name,
-									logo: { base64, mime: file.type as typeof logoMimeTypes[number] },
-								})
-							);
-						}} />
-						<GenerateTeamLogo refresh={infoCall} />
+						<FileInput disabled={registrationClosed} maxSize={logoMaxSize} mimeTypes={logoMimeTypes}
+							onUpload={file => {
+								void toBase64(file).then(base64 =>
+									updateTeam.call({
+										name: team.name,
+										logo: { base64, mime: file.type as typeof logoMimeTypes[number] },
+									})
+								);
+							}} />
+						<GenerateTeamLogo disabled={registrationClosed} refresh={infoCall} />
 					</div>
 
 					<Text v="bold" className="-mb-2">Join code</Text>
@@ -553,15 +611,38 @@ export function RegistrationEditor() {
 						}} className="h-auto" />
 					</div>
 
-					<Button loading={loading} className="mt-5 w-fit" onClick={() => {
-						leaveTeam.call();
-					}}>
+					<div className="flex flex-col gap-0.5">
+						<Text v="bold">Members</Text>
+						<Text v="smbold" className="mb-1">{team.members.length}/{teamLimit} members</Text>
+						{team.members.map(v =>
+							<div key={v.id}
+								className={twJoin(
+									"flex flex-row flex-wrap gap-1 gap-x-4 p-1 justify-between items-center px-2",
+									containerDefault,
+									bgColor.secondary,
+								)}>
+								{v.name != null ? <Text>{v.name}</Text> : <Text v="dim">No name</Text>}{" "}
+								<Text>{v.email}</Text>
+							</div>
+						)}
+					</div>
+
+					<Button disabled={registrationClosed} loading={loading} className="mt-1 w-fit"
+						onClick={() => {
+							leaveTeam.call();
+						}}>
 						Leave team
 					</Button>
 				</div>
 				: <div className="flex flex-row gap-2">
-					<Button loading={loading} onClick={() => setCreateTeamOpen(true)}>Create team</Button>
-					<Button loading={loading} onClick={() => setJoinTeamOpen(true)}>Join team</Button>
+					<Button disabled={registrationClosed} loading={loading}
+						onClick={() => setCreateTeamOpen(true)}>
+						Create team
+					</Button>
+					<Button disabled={registrationClosed} loading={loading}
+						onClick={() => setJoinTeamOpen(true)}>
+						Join team
+					</Button>
 				</div>}
 		</Card>
 
@@ -587,22 +668,20 @@ export function RegistrationEditor() {
 				}}>
 					Logout
 				</Button>
-				<Modal open={deleteUserOpen} onClose={() => setDeleteUserOpen(false)}
-					title="Delete account?">
+				<ConfirmModal open={deleteUserOpen} onClose={() => setDeleteUserOpen(false)}
+					confirm={() => {
+						setDeleteUserOpen(false);
+						deleteUser.call();
+					}} actionName="Delete account" title="Delete account?">
 					<Text v="bold">Are you sure you want to delete your account?</Text>
+					<Text>
+						You will no longer be eligible to participate and unable to register if registration has
+						closed.
+					</Text>
 					<Text>
 						You can reuse your email for a new account by using the same verification email.
 					</Text>
-					<div className="flex flex-row gap-2">
-						<Button className={bgColor.red} onClick={() => {
-							setDeleteUserOpen(false);
-							deleteUser.call();
-						}}>
-							Delete account
-						</Button>
-						<Button onClick={() => setDeleteUserOpen(false)}>Cancel</Button>
-					</div>
-				</Modal>
+				</ConfirmModal>
 
 				<Button onClick={() => setDeleteUserOpen(true)}>Delete account</Button>
 			</div>

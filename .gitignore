@@ -26,5 +26,7 @@ dist-ssr
 *.tsbuildinfo
 
 .env
+server/screenshots
+scripts/list.txt
 db.sqlite
 scripts/manage.ts

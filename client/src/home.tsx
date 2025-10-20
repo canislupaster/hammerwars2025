@@ -1,11 +1,13 @@
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-preact";
 import { ComponentChildren } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
-import { fill } from "../../shared/util";
+import { fill, Scoreboard } from "../../shared/util";
+import { useFeed } from "./clientutil";
 import { Footer } from "./main";
-import { Anchor, bgColor, borderColor, Button, Card, Collapse, containerDefault, ease,
-	interactiveContainerDefault, Text, textColor, useGoto, useMd } from "./ui";
+import { ScoreboardStatus } from "./scoreboard";
+import { Anchor, bgColor, borderColor, Button, Card, Collapse, containerDefault, Countdown, ease,
+	interactiveContainerDefault, Text, textColor, useGoto, useLg, useTimeUntil } from "./ui";
 
 const squared = (x: ComponentChildren) =>
 	<div className="flex flex-row gap-4 items-center relative">
@@ -15,11 +17,19 @@ const squared = (x: ComponentChildren) =>
 		<div className="z-10">{x}</div>
 	</div>;
 
-const sectionStyle = (inv: boolean) =>
-	twJoin(
-		inv ? bgColor.secondary : "",
-		"flex flex-col gap-2 items-start md:px-[20vw] px-5 w-full py-10",
-	);
+function Section(
+	{ children, inv, className }: { children: ComponentChildren; inv?: boolean; className?: string },
+) {
+	return <div
+		className={twMerge(
+			"flex flex-col gap-2 items-start md:px-[20vw] px-5 w-full py-10 relative overflow-clip",
+			className,
+		)}>
+		{children}
+		{inv == true
+			&& <div className={twJoin("absolute w-full h-full top-0 left-0 -z-20", bgColor.secondary)} />}
+	</div>;
+}
 
 type ScheduleItem = { time: string; title: string; note: string };
 
@@ -43,21 +53,20 @@ const scheduleItems: ScheduleItem[] = [
 type FAQItem = { question: string; answer: ComponentChildren };
 
 const faqItems: FAQItem[] = [{
-	question: "Who can compete at HammerWars?",
+	question: "What do I need to bring?",
 	answer:
-		"Teams of up to three participants are welcome, and every teammate should register before registration closes on October 24.",
-}, {
-	question: "Do in-person teams need to bring laptops?",
-	answer:
-		"We provide locked-down workstations for the contest. Feel free to bring notes for the setup hour, but personal devices stay packed once the main round begins.",
+		"Please bring scratch paper and writing utensils. You don't need a device; the contest will be held on lab computers.",
 }, {
 	question: "Can we join remotely?",
+	answer: "Yes! Online teams also compete through DOMJudge.",
+}, {
+	question: "What languages are supported?",
 	answer:
-		"Yes! Online teams also compete through DOMJudge. Make sure your whole team can hop on a video or chat together and test your environment during the practice window.",
+		"C++, Python (PyPy 3), Java, Kotlin, Javascript, Typescript, Rust and Zig are all supported by our judgehosts.",
 }, {
 	question: "Will there be food?",
 	answer:
-		"Lunch is provided before the contest, and we close out the night with pizza alongside the awards ceremony.",
+		"Snacks and coffee are in the morning, followed by lunch between the practice and official contest. We close out the night with pizza.",
 }];
 
 function FAQAccordion({ items }: { items: FAQItem[] }) {
@@ -306,23 +315,42 @@ export function PatternBg(
 			observer.disconnect();
 			if (frame != null) cancelAnimationFrame(frame);
 		};
-	}, [grad, pat, velocity]);
+	}, [grad, velocity]);
 
 	return <div
 		className="absolute left-0 right-0 top-0 bottom-0 overflow-hidden mix-blend-screen -z-10"
 		ref={container} />;
 }
 
-function Hero() {
+function Status() {
+	const [sc, setSc] = useState<Scoreboard>();
+	useFeed("scoreboard", setSc);
+	return <Collapse open={sc?.startTimeMs != undefined || sc?.endTimeMs != undefined}
+		className="md:w-[80%] w-full px-10">
+		<div className="flex flex-col lg:flex-row gap-2 items-center p-5 justify-center lg:justify-between w-full gap-y-3">
+			<div className="flex flex-row gap-2 items-center">
+				<span className="h-4 aspect-square rounded-full bg-red-500 animate-pulse" />
+				<Text className="pt-0.5" v="md">Contest status</Text>
+			</div>
+			<ScoreboardStatus sc={sc} home />
+		</div>
+	</Collapse>;
+}
+
+function Hero({ registerOnly }: { registerOnly?: boolean }) {
 	const goto = useGoto();
-	const md = useMd();
-	return <div className="w-full h-[30vh] relative">
+	const lg2 = useLg();
+	const lg = lg2 || registerOnly == true;
+	return <div className={twJoin("w-full relative", registerOnly == true ? "h-[20vh]" : "h-[30vh]")}>
 		<div
-			className={md
-				? "z-50 flex flex-row justify-between px-10 items-center h-full"
-				: "flex flex-col gap-5 items-center justify-center h-full"}>
-			<div className="flex flex-col gap-4">
-				<h1 className="md:text-6xl text-5xl z-20 animate-fade-in">
+			className={twJoin(
+				lg
+					? "z-50 flex flex-row px-10 items-center h-full"
+					: "flex flex-col gap-5 items-center h-full",
+				!lg || registerOnly == true ? "justify-center" : "justify-between",
+			)}>
+			{registerOnly != true && <div className="flex flex-col gap-4">
+				<h1 className="lg:text-6xl text-5xl z-20 animate-fade-in">
 					HAMMERWARS<span className="font-black anim-delay animate-fade-in">2025</span>
 				</h1>
 				<p className="z-20 text-xl">
@@ -332,12 +360,16 @@ function Hero() {
 					</span>{" "}
 					programming contest.
 				</p>
-			</div>
-			<div className={twJoin("flex flex-col gap-2 pt-2 items-center", md && "pr-20 pt-5")}>
+			</div>}
+			<div
+				className={twJoin(
+					"flex flex-col gap-2 pt-2 items-center",
+					lg && registerOnly != true && "pr-20 pt-5",
+				)}>
 				<Button
 					className={twJoin(
 						"z-50 rounded-none border-4",
-						md ? "text-3xl p-5 pr-1" : "text-xl p-3 pr-0 py-1",
+						lg ? "text-3xl p-5 pr-1" : "text-xl p-3 pr-0 py-1",
 					)}
 					onClick={() => goto("/register")}
 					iconRight={<IconChevronRight size={48} />}>
@@ -353,47 +385,73 @@ function Hero() {
 
 export function Home() {
 	const sponsorImageCls = "w-xs hover:scale-110 transition-all duration-300";
+	const bullet = [
+		/* eslint-disable react/jsx-key */
+		<>
+			<span className="text-xl font-big">5</span> hours.
+		</>,
+		<>
+			<span className="text-xl font-big">12</span> problems.
+		</>,
+		<>
+			<span className="text-xl font-big -mr-2">3</span> -person teams.
+		</>,
+		/* eslint-enable react/jsx-key */
+		"Held at Purdue University.",
+	];
 	return <>
 		<Hero />
 
-		<div
-			className={twJoin(
-				sectionStyle(true),
-				"flex flex-row justify-between gap-5 items-center flex-wrap",
-			)}>
-			<div className="flex flex-col gap-2 justify-center grow basis-md">
-				{squared(<Text v="big">A familiar contest.</Text>)}
-				<p>
-					<Text v="bold">
-						5 hours.<br />12 problems.<br />Teams of up to 3 people.
-					</Text>
-				</p>
-				<p>
-					Both online and physical participants will participate in the contest on DOMJudge, though
-					physical participants will be on locked-down systems to preserve contest integrity. You'll
-					also be given an hour to setup the systems and practice with unrestricted internet access.
-				</p>
-			</div>
-			<img src="/graphic.png" className="max-w-sm self-end mix-blend-screen" />
-		</div>
+		<Status />
 
-		<div className={sectionStyle(false)}>
-			{squared(<Text v="big">Prizes</Text>)}
-			<p>
-				Prizes will only be given to in-person participants as financial aid at an academic
-				institution. Each prize is{" "}
-				<b>per person</b>, and if there are fewer than 3 people on a team, each person still
-				receives the same amount. Team up!
+		<Section inv>
+			{squared(<Text v="big">An ICPC-inspired contest</Text>)}
+			<img src="/squares.svg" className="absolute opacity-50 h-[130%] -top-[20%] -right-10 -z-10" />
+			<p className="mt-3">
+				The <Anchor href="https://purduecpu.com">Competitive Programmers Union</Anchor>{" "}
+				at Purdue University is thrilled to announce our annual programming contest, now with an
+				online division.
 			</p>
-			{([["🥇 1st place", "$200 each"], ["🥈 2nd place", "$150 each"], [
-				"🥉 3rd place",
-				"$100 each",
-			], ["🏆 4th-6th places", "$50 each"]] as const).map(([a, b], i) =>
-				<p className="mt-3 md:px-10 px-5 font-bold text-lg" key={i}>{a}: {b}</p>
-			)}
-		</div>
+			<div className="mt-2 leading-10">
+				{bullet.map((v, i) =>
+					<div key={i} className="flex flex-row gap-2 items-baseline">
+						<span className="bg-white h-5 aspect-square" style={{ opacity: 1-i/bullet.length }} />
+						{v}
+					</div>
+				)}
+			</div>
+		</Section>
 
-		<div className={sectionStyle(true)}>
+		<Section>
+			{squared(<Text v="big">A beginner-friendly contest</Text>)}
+			<img src="/creepysmile.svg"
+				className="absolute opacity-5 h-[150%] -top-[10%] -right-10 -z-10" />
+			<Text v="bold" className="my-5">
+				HammerWars is for{" "}
+				<span className="bg-clip-text bg-gradient-to-r from-zinc-200 to-zinc-100 text-transparent font-bold">
+					everyone who can code.
+				</span>
+			</Text>
+			<Text>
+				We've created accessible versions of harder problems so everyone can enjoy the contest,{" "}
+				<b>no matter their experience.</b>
+			</Text>
+			<Text className="mt-5 italic" v="sm">
+				And for the exceptional, we doubt anyone can AK the contest, but we challenge you to try!
+			</Text>
+		</Section>
+
+		<Section inv>
+			<img src="/present.svg" className="absolute opacity-40 h-[110%] top-[10%] -left-10 -z-10" />
+			{squared(<Text v="big">Stuff</Text>)}
+			<p>
+				In-person contestants will receive <b>free lunch/dinner/snacks, shirts, and</b>.
+			</p>
+		</Section>
+
+		<Section>
+			<img src="/heart.svg"
+				className="absolute opacity-5 md:opacity-10 h-[120%] -top-[10%] -left-20 -z-10" />
 			{squared(<Text v="big">Sponsors</Text>)}
 			<div className="flex flex-row justify-center mt-10 w-full">
 				<a href="https://hudsonrivertrading.com/">
@@ -404,9 +462,9 @@ export function Home() {
 						)} />
 				</a>
 			</div>
-		</div>
+		</Section>
 
-		<div className={sectionStyle(false)}>
+		<Section inv>
 			{squared(<Text v="big">Event schedule</Text>)}
 			<div className="w-full flex flex-col gap-4 mt-6">
 				{scheduleItems.map((
@@ -419,16 +477,16 @@ export function Home() {
 					<Text v="sm" className="-mt-1">{note}</Text>
 				</Card>))}
 			</div>
-		</div>
+		</Section>
 
-		<div className={sectionStyle(true)}>
+		<Section>
 			{squared(<Text v="big">FAQ</Text>)}
 			<div className="w-full mt-6">
 				<FAQAccordion items={faqItems} />
 			</div>
-		</div>
+		</Section>
 
-		<div className={sectionStyle(false)}>
+		<Section inv>
 			{squared(<Text v="big">History of HammerWars</Text>)}
 			<Text>
 				This will be the <b>fourth</b>{" "}
@@ -448,8 +506,9 @@ export function Home() {
 				className="self-center mt-2">
 				Purdue Hackers event recap
 			</Anchor>
-		</div>
+		</Section>
 
+		<Hero registerOnly />
 		<Footer />
 	</>;
 }

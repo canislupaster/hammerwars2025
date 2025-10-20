@@ -107,6 +107,7 @@ export const logoMaxSize = 1024*1024*1;
 export const resumeMaxSize = 1024*1024*5;
 export const maxPromptLength = 1024*4;
 export const screenshotMaxWidth = 1920;
+export const teamLimit = 3;
 
 export const shirtSizes = ["xs", "s", "m", "l", "xl", "2xl", "3xl", "4xl", "5xl"] as const;
 
@@ -131,9 +132,10 @@ export type TeamContestProperties = {
 };
 
 export type ContestProperties = {
-	registrationEnds: number;
+	registrationEnds: number | null;
 	registrationOpen: boolean;
 	domJudgeCid: string;
+	resolveIndex: number | null;
 	team: TeamContestProperties;
 };
 
@@ -150,6 +152,7 @@ export type ScoreboardLastSubmission = {
 	submissionTimeMs: number;
 	penaltyMinutes: number;
 	incorrect: number;
+	first: boolean;
 	ac: boolean | null;
 };
 
@@ -159,9 +162,9 @@ export type ScoreboardTeam = Readonly<
 		logo: string | null;
 		rank: number;
 		solves: number;
-		totalPenaltyMinutes: number;
+		penaltyMinutes: number;
 		problems: ReadonlyMap<string, Readonly<ScoreboardLastSubmission>>;
-		members: string[];
+		members: readonly string[];
 	}
 >;
 
@@ -174,6 +177,11 @@ export type Scoreboard = Readonly<
 		freezeTimeMs?: number;
 		endTimeMs?: number;
 		penaltyTimeMs?: number;
+		resolvingState: Readonly<
+			{ type: "resolved" } | { type: "resolving"; team: number; problem: string | null } | {
+				type: "unresolved";
+			}
+		>;
 	}
 >;
 
@@ -201,7 +209,12 @@ export type API = {
 			info: PartialUserInfo;
 			submitted: boolean;
 			lastEdited: number;
-			team: { name: string; logo: string | null; joinCode: string } | null;
+			team: {
+				name: string;
+				logo: string | null;
+				joinCode: string;
+				members: { name: string | null; email: string; id: number; inPerson: boolean | null }[];
+			} | null;
 			hasResume: boolean;
 		};
 	};
@@ -217,12 +230,12 @@ export type API = {
 			logo: { base64: string; mime: typeof logoMimeTypes[number] } | "remove" | null;
 		};
 	};
-	joinTeam: { request: { joinCode: string } };
+	joinTeam: { request: { joinCode: string }; response: { full: boolean } };
 	leaveTeam: unknown;
 	getProperties: { response: Partial<ContestProperties> };
 	setProperties: { request: Partial<ContestProperties> };
 	getResumeId: { request: { id: number }; response: { base64: string } };
-	getTeamLogoId: { request: { id: number }; response: { base64: string; mime: string } };
+	getTeamLogo: { request: { id: number }; response: { base64: string; mime: string } };
 	allData: {
 		response: {
 			users: {
@@ -236,6 +249,7 @@ export type API = {
 		};
 	};
 	setTeams: { request: (Omit<AdminTeamData, "logoId"> | { id: number; delete: true })[] };
+	teamInfo: { request: { id: number }; response: AdminTeamData };
 	teamFeed: {
 		request: { id: number };
 		feed: true;
@@ -258,21 +272,39 @@ export type ServerResponse<K extends keyof API> = { type: "error"; error: APIErr
 	session?: Session | "clear";
 };
 
-export type APIRequest<T extends keyof API> = API[T] extends { request: unknown }
-	? [API[T]["request"]]
+export type APIRequestBase<T extends keyof API> = API[T] extends { request: unknown }
+	? [data: API[T]["request"]]
 	: [];
+
+export type APIRequest<T extends keyof API> = APIRequestBase<T> | [
+	...APIRequestBase<T>,
+	abort: AbortSignal,
+];
 
 type IsNonFeedAPI<K extends keyof API> = API[K] extends { feed: true } ? never : K;
 type IsFeedAPI<K extends keyof API> = API[K] extends { feed: true } ? K : never;
 export type NonFeedAPI = { [K in keyof API as IsNonFeedAPI<K>]: API[K] };
 export type FeedAPI = { [K in keyof API as IsFeedAPI<K>]: API[K] };
 
-export async function* handleNDJSONResponse(resp: Response) {
+export async function* handleNDJSONResponse(resp: Response, signal?: AbortSignal) {
 	const reader = resp.body!.pipeThrough(new TextDecoderStream()).getReader();
+	let abortCb: (() => void) | undefined;
+	let abortPromise = new Promise<{ type: "abort"; reason: unknown }>(() => {});
+	if (signal) {
+		abortPromise = new Promise(res => {
+			abortCb = () => res({ type: "abort", reason: signal.reason });
+			signal.addEventListener("abort", abortCb);
+		});
+	}
 	try {
 		let buf = "", i = 0;
 		while (true) {
-			const { value, done } = await reader.read();
+			const nxt = await Promise.race([
+				reader.read().then(v => ({ type: "reader", v } as const)),
+				abortPromise,
+			]);
+			if (nxt.type == "abort") throw nxt.reason;
+			const { value, done } = nxt.v;
 			if (value != undefined) buf += value;
 			while (i < buf.length) {
 				if (buf[i++] == "\n") {
@@ -288,11 +320,24 @@ export async function* handleNDJSONResponse(resp: Response) {
 		}
 	} finally {
 		await reader.cancel();
+		if (abortCb != undefined) signal?.removeEventListener("abort", abortCb);
 	}
 }
 
-export function delay(ms: number) {
-	return new Promise<void>(res => setTimeout(res, ms));
+// false if aborted
+export function delay(ms: number, abort?: AbortSignal): Promise<boolean> {
+	return new Promise<boolean>(res => {
+		const tm = setTimeout(() => {
+			res(true);
+			abort?.removeEventListener("abort", cb);
+		}, ms);
+		const cb = () => {
+			clearTimeout(tm);
+			abort?.removeEventListener("abort", cb);
+			res(false);
+		};
+		abort?.addEventListener("abort", cb);
+	});
 }
 
 export const getTeamLogoURL = (logoId: number) => `teamLogo/${logoId}`;
@@ -308,6 +353,7 @@ export class APIClient {
 	) {}
 
 	async #fetch<T extends keyof API>(k: T, ...args: APIRequest<T>) {
+		const f = args[0], d = args[args.length-1];
 		return await fetch(new URL(k, this.baseUrl), {
 			headers: {
 				"Content-Type": "application/json",
@@ -317,7 +363,8 @@ export class APIClient {
 					? { Authorization: `Basic ${this.auth.session.id} ${this.auth.session.key}` }
 					: {},
 			},
-			body: args.length > 0 ? stringifyExtra(args[0]) : undefined,
+			signal: d instanceof AbortSignal ? d : undefined,
+			body: f != undefined && !(f instanceof AbortSignal) ? stringifyExtra(f) : undefined,
 			credentials: "same-origin",
 			method: "POST",
 		});
@@ -335,7 +382,8 @@ export class APIClient {
 
 	async *feed<T extends keyof FeedAPI>(k: T, ...args: APIRequest<T>) {
 		const resp = await this.#fetch(k, ...args);
-		for await (const x of handleNDJSONResponse(resp)) {
+		const f = args[args.length-1];
+		for await (const x of handleNDJSONResponse(resp, f instanceof AbortSignal ? f : undefined)) {
 			yield this.#handleResp(x as ServerResponse<T>);
 		}
 	}

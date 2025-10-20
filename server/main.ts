@@ -6,7 +6,7 @@ import { Context as HonoContext, Hono } from "hono";
 import { streamText } from "hono/streaming";
 import { ContentfulStatusCode } from "hono/utils/http-status";
 import { Buffer } from "node:buffer";
-import { createHash, randomBytes } from "node:crypto";
+import { argon2, randomBytes, timingSafeEqual } from "node:crypto";
 import { OpenAI } from "openai";
 import z from "zod";
 import { API, APIError, parseExtra, ServerResponse, Session,
@@ -14,18 +14,30 @@ import { API, APIError, parseExtra, ServerResponse, Session,
 import { getDb, transaction } from "./db.ts";
 import "./routes.ts";
 import { StreamingApi } from "hono/utils/stream";
+import { promisify } from "node:util";
 import { makeRoutes } from "./routes.ts";
+
+export const env = z.parse(
+	z.object({
+		NOSEND_EMAIL: z.literal("1"),
+		AWS_REGION: z.string(),
+		AWS_ACCESS_KEY_ID: z.string(),
+		AWS_SECRET_ACCESS_KEY: z.string(),
+		ROOT_URL: z.string(),
+		TRUSTED_PROXY: z.string().optional(),
+		ADMIN_API_KEY: z.string(),
+		CLIENT_API_KEY: z.string(),
+		OPENAI_API_KEY: z.string(),
+		DOMJUDGE_URL: z.string(),
+		DOMJUDGE_API_USER: z.string(),
+		DOMJUDGE_API_KEY: z.string(),
+		SCREENSHOT_PATH: z.string().optional(),
+	}),
+	process.env,
+);
 
 export type HonoEnv = { Variables: { session?: "clear" | Session } };
 export type Context = HonoContext<HonoEnv>;
-
-export function doHash(...pass: string[]) {
-	const h = createHash("SHA256");
-	for (const s of pass) h.update(Buffer.from(s));
-	return h.digest().toString("hex");
-}
-
-export const genKey = () => randomBytes(16).toString("hex");
 
 export const err = (msg: string, type?: "auth"): APIError =>
 	new APIError(
@@ -82,7 +94,7 @@ function errToJson(err: unknown): ServerResponse<never> & { type: "error" } {
 }
 
 type RateLimitBucket = { since: number; times: number };
-const trustedProxy = process.env.TRUSTED_PROXY;
+const trustedProxy = env.TRUSTED_PROXY;
 
 export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, data: APIRoute[K]) {
 	const buckets = new Map<string, RateLimitBucket>();
@@ -154,18 +166,44 @@ export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, dat
 
 const sessionExpireMs = 3600*1000*24*7;
 
+const argon2Parameters = { parallelism: 1, tagLength: 32, memory: 8192, passes: 3 };
+
+export const genKey = () => randomBytes(32);
+
+export async function getKey(password: string) {
+	password = password.normalize();
+	const salt = randomBytes(32);
+	const v = await promisify(argon2)("argon2id", {
+		message: password,
+		nonce: salt,
+		...argon2Parameters,
+	});
+	return [salt.toString("hex"), v.toString("hex")].join(";");
+}
+
+export async function matchKey(key: string, password: string) {
+	password = password.normalize();
+	const [salt, derivedKey] = key.split(";");
+	const v = await promisify(argon2)("argon2id", {
+		message: password,
+		nonce: Buffer.from(salt, "hex"),
+		...argon2Parameters,
+	});
+	return v.toString("hex") == derivedKey;
+}
+
 const apiKeys = {
-	admin: process.env.ADMIN_API_KEY != undefined ? doHash(process.env.ADMIN_API_KEY) : null,
-	client: process.env.CLIENT_API_KEY != undefined ? doHash(process.env.CLIENT_API_KEY) : null,
+	admin: env.ADMIN_API_KEY != undefined ? await getKey(env.ADMIN_API_KEY) : null,
+	client: env.CLIENT_API_KEY != undefined ? await getKey(env.CLIENT_API_KEY) : null,
 };
 
-export async function keyAuth(c: Context, admin?: boolean) {
+export async function keyAuth(c: Context, admin: boolean) {
 	const authHdr = c.req.header("Authorization");
 	if (authHdr == undefined) throw err("No auth header", "auth");
 	const bearerMatch = authHdr.match(/^Bearer (.+)$/);
 	if (bearerMatch == null) throw err("Invalid auth header", "auth");
-	const auth = doHash(bearerMatch[1]) == apiKeys.admin
-		|| (doHash(bearerMatch[1]) == apiKeys.client && admin != true);
+	const auth = (apiKeys.admin != null && await matchKey(apiKeys.admin, bearerMatch[1]))
+		|| (apiKeys.client != null && await matchKey(apiKeys.client, bearerMatch[1]) && admin != true);
 	if (!auth) throw err("Incorrect API key", "auth");
 }
 
@@ -178,14 +216,16 @@ export async function auth(c: Context): Promise<number> {
 	const ses = await transaction(trx => getDb(trx, "session", id));
 	if (ses == undefined) throw err("no session found", "auth");
 	if (Date.now() >= ses.created+sessionExpireMs) throw err("session expired", "auth");
-	if (ses.key != doHash(match[2])) throw err("invalid session key", "auth");
+	if (!timingSafeEqual(ses.key, Buffer.from(match[2], "hex"))) {
+		throw err("invalid session key", "auth");
+	}
 	return ses.user;
 }
 
-export const sesClient = new SESClient({ region: process.env.AWS_REGION });
+export const sesClient = new SESClient({ region: env.AWS_REGION });
 export const openai = new OpenAI();
 
-export const rootUrl = new URL(process.env.ROOT_URL!);
+export const rootUrl = new URL(env.ROOT_URL);
 
 const app = new Hono<HonoEnv>();
 app.use("*", serveStatic({ root: "../client/dist" }));

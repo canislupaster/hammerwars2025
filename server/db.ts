@@ -10,7 +10,6 @@ type Database = {
 		joinCode: string;
 		name: string;
 		domJudgeId: string | null;
-		domJudgeUser: string | null;
 		domJudgePassword: string | null;
 	};
 	teamLogo: { id: GeneratedAlways<number>; team: number; logo: Buffer; logoMime: string };
@@ -21,10 +20,10 @@ type Database = {
 		time: number;
 		path: string;
 	};
-	emailVerification: { id: GeneratedAlways<number>; key: string; email: string };
+	emailVerification: { id: GeneratedAlways<number>; key: Buffer; email: string };
 	user: { id: GeneratedAlways<number>; team: number | null; email: string; data: string };
 	resume: { id: GeneratedAlways<number>; user: number; file: Buffer };
-	session: { id: GeneratedAlways<number>; created: number; key: string; user: number };
+	session: { id: GeneratedAlways<number>; created: number; key: Buffer; user: number };
 	properties: { key: string; value: string };
 };
 
@@ -32,7 +31,6 @@ export type UserData = {
 	info: PartialUserInfo;
 	submitted: UserInfo | null;
 	lastEdited: number;
-	passwordSalt: string;
 	passwordHash: string;
 };
 
@@ -68,7 +66,7 @@ const migrator = new Migrator({
 								c.notNull()).addColumn("domJudgeId", "text", c =>
 								c.unique()).addColumn("domJudgePassword", "text").execute();
 						await db.schema.createTable("emailVerification").addColumn("id", "integer", c =>
-							c.primaryKey().autoIncrement()).addColumn("key", "text", c =>
+							c.primaryKey().autoIncrement()).addColumn("key", "blob", c =>
 								c.notNull()).addColumn("email", "text", c =>
 								c.notNull().unique()).execute();
 						await db.schema.createTable("user").addColumn("id", "integer", col =>
@@ -86,17 +84,23 @@ const migrator = new Migrator({
 								c.notNull()).execute();
 						await db.schema.createTable("teamScreenshot").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("team", "integer", c =>
-								c.notNull().references("team.id")).addColumn("mac", "text", c =>
-								c.notNull()).addColumn("time", "integer", c =>
+								c.notNull().references("team.id").onDelete("no action")).addColumn(
+								"mac",
+								"text",
+								c => c.notNull(),
+							).addColumn("time", "integer", c =>
 								c.notNull()).addColumn("path", "text", c =>
 								c.notNull()).execute();
 						await db.schema.createTable("resume").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("user", "integer", col =>
-								col.notNull().references("user.id").unique()).addColumn("file", "blob", col =>
-								col.notNull()).execute();
+								col.notNull().references("user.id").unique().onDelete("cascade")).addColumn(
+								"file",
+								"blob",
+								col => col.notNull(),
+							).execute();
 						await db.schema.createTable("session").addColumn("id", "integer", col =>
 							col.primaryKey().autoIncrement()).addColumn("created", "integer", c =>
-								c.notNull()).addColumn("key", "text", c =>
+								c.notNull()).addColumn("key", "blob", c =>
 								c.notNull()).addColumn("user", "integer", c =>
 								c.references("user.id").onDelete("cascade")).execute();
 						await db.schema.createTable("properties").addColumn("key", "text", c =>
@@ -109,6 +113,9 @@ const migrator = new Migrator({
 						await db.schema.dropTable("team").execute();
 						await db.schema.dropTable("properties").execute();
 						await db.schema.dropTable("session").execute();
+						await db.schema.dropTable("resume").execute();
+						await db.schema.dropTable("teamScreenshot").execute();
+						await db.schema.dropTable("teamLogo").execute();
 					},
 				} satisfies Migration,
 			};
@@ -225,6 +232,10 @@ export class EventEmitter<T> {
 	wait<Abort extends boolean>(...stop: Abort extends true ? [AbortSignal] : []) {
 		const abortSignal = stop[0];
 		return new Promise<Abort extends true ? T | null : T>(res => {
+			if (abortSignal?.aborted == true) {
+				res(null as Abort extends true ? T | null : T);
+				return;
+			}
 			const rem = () => {
 				this.#listeners.delete(done);
 				abortSignal?.removeEventListener("abort", rem);
