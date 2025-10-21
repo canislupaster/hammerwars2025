@@ -25,6 +25,13 @@ type Database = {
 	resume: { id: GeneratedAlways<number>; user: number; file: Buffer };
 	session: { id: GeneratedAlways<number>; created: number; key: Buffer; user: number };
 	properties: { key: string; value: string };
+	announcement: {
+		id: GeneratedAlways<number>;
+		time: number;
+		team: number | null;
+		title: string;
+		body: string;
+	};
 };
 
 export type UserData = {
@@ -106,6 +113,14 @@ const migrator = new Migrator({
 						await db.schema.createTable("properties").addColumn("key", "text", c =>
 							c.primaryKey().notNull()).addColumn("value", "json", c =>
 								c.notNull()).execute();
+						await db.schema.createTable("announcement").addColumn("id", "integer", col =>
+							col.primaryKey().autoIncrement()).addColumn("time", "integer", c =>
+								c.notNull()).addColumn("title", "text", c =>
+								c.notNull()).addColumn("body", "text", c =>
+								c.notNull()).addColumn("team", "integer", c =>
+								c.references("team.id").onDelete("cascade")).execute();
+						await db.schema.createIndex("teamAnnouncement").on("announcement").column("team")
+							.execute();
 					},
 					async down(db) {
 						await db.schema.dropIndex("emailVerification").execute();
@@ -116,6 +131,8 @@ const migrator = new Migrator({
 						await db.schema.dropTable("resume").execute();
 						await db.schema.dropTable("teamScreenshot").execute();
 						await db.schema.dropTable("teamLogo").execute();
+						await db.schema.dropTable("announcement").execute();
+						await db.schema.dropTable("teamAnnouncement").execute();
 					},
 				} satisfies Migration,
 			};

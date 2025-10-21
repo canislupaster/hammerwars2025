@@ -3,8 +3,17 @@ import { API, APIClient, APIError, APIRequest, APIRequestBase, FeedAPI, NonFeedA
 	ServerResponse, Session, stringifyExtra } from "../../shared/util";
 import { useAsync } from "./ui";
 
-export type LocalStorage = Partial<{ session: Session }> & { toJSON(): unknown };
-const localStorageKeys: (Exclude<keyof LocalStorage, "toJSON">)[] = ["session"];
+export type LocalStorage = Partial<{ session: Session; apiKey: string }> & { toJSON(): unknown };
+const localStorageKeys = ["session", "apiKey"] as const satisfies Exclude<
+	keyof LocalStorage,
+	"toJSON"
+>[];
+
+// i keep forgetting to add stuff to keys...
+undefined as unknown as Exclude<
+	keyof LocalStorage,
+	"toJSON"
+> satisfies typeof localStorageKeys[number];
 
 export const LocalStorage = {} as unknown as LocalStorage;
 

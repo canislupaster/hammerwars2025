@@ -75,7 +75,9 @@ button:not(:disabled) {
   --animate-flip-in: flip-in 0.6s both;
   --animate-fade-in: fade-in 1s both;
   --animate-fade-out: fade-out 1s forwards;
-  --animate-shrink: shrink 1s forwards, fade-out 2s forwards;
+  --animate-shrink: shrink 1s both, fade-in 0.2s both;
+  --animate-shrink-x: shrink-x 1s forwards;
+  --animate-pulse-faster: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 
   @keyframes flip-in {
     0% { transform: rotateX(80deg) scale(0.9); }
@@ -98,8 +100,13 @@ button:not(:disabled) {
   }
 
   @keyframes shrink {
-    0% { transform: scaleX(10); }
-    100% { transform: scaleX(1); }
+    0% { transform: scale(2); }
+    100% { transform: scale(1); }
+  }
+
+  @keyframes shrink-x {
+    0% { transform: scaleX(10) scaleY(1.3); opacity: 0.9 }
+    100% { transform: scaleX(1); opacity: 0}
   }
 
   @keyframes fade-out {

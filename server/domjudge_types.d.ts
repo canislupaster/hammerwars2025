@@ -198,7 +198,8 @@ export interface Judgement {
 	submission_id: string;
 	judgement_type_id?: string | null; // required iff judgement completed
 	score?: number; // required iff scoreboard_type = 'score'
-	current?: boolean; // defaults true
+	// apparently not on domjudge?
+	// current?: boolean; // defaults true
 	start_time: string; // TIME
 	start_contest_time: string; // RELTIME
 	end_time?: string | null; // TIME

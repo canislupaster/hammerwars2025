@@ -4,7 +4,7 @@ import { defineConfig, loadEnv } from "vite";
 
 const devEnv = loadEnv("development", process.cwd());
 export default defineConfig(x => ({
-	plugins: [preact({ devToolsEnabled: true }), tailwindcss()],
+	plugins: [preact({ devToolsEnabled: x.mode == "development" }), tailwindcss()],
 	server: x.mode != "development"
 		? {}
 		: {

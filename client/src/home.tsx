@@ -1,11 +1,11 @@
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-preact";
 import { ComponentChildren } from "preact";
+import { lazy } from "preact-iso";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
 import { fill, Scoreboard } from "../../shared/util";
 import { useFeed } from "./clientutil";
 import { Footer } from "./main";
-import { ScoreboardStatus } from "./scoreboard";
 import { Anchor, bgColor, borderColor, Button, Card, Collapse, containerDefault, Countdown, ease,
 	interactiveContainerDefault, Text, textColor, useGoto, useLg, useTimeUntil } from "./ui";
 
@@ -160,7 +160,7 @@ class Pattern1 extends Pattern {
 
 export class Pattern2 extends Pattern {
 	r = -Math.log(1-0.5);
-	delay = 0.3;
+	delay = 0.6;
 	lastStep = 0;
 	flipDur = 10;
 
@@ -215,7 +215,12 @@ export class Pattern2 extends Pattern {
 }
 
 export function PatternBg(
-	{ velocity, pat, grad }: { velocity?: number; pat: () => Pattern; grad?: boolean },
+	{ velocity, pat, grad, opacity }: {
+		velocity?: number;
+		pat: () => Pattern;
+		grad?: boolean;
+		opacity?: number;
+	},
 ) {
 	const container = useRef<HTMLDivElement>(null);
 	const patInst = useRef<Pattern | null>(null);
@@ -292,7 +297,7 @@ export function PatternBg(
 						const l = (i+offset[j][i][1])*sz+off;
 						nodes[j][i].style.left = `${l}px`;
 						nodes[j][i].style.top = `${(j+offset[j][i][0])*sz-yOff}px`;
-						const target = flipped[j][i] ? 1 : 0;
+						const target = flipped[j][i] ? (opacity ?? 1) : 0;
 						brightness[j][i] = coeff*brightness[j][i]+(1-coeff)*target;
 						offset[j][i] = [moveCoeff*offset[j][i][0], moveCoeff*offset[j][i][1]];
 						const close = !offset[j][i].some(x => Math.abs(x) > 0.2);
@@ -302,7 +307,7 @@ export function PatternBg(
 					}
 				}
 
-				frame = requestAnimationFrame(nt => layout(nt));
+				frame = requestAnimationFrame(layout);
 			};
 
 			if (frame != null) cancelAnimationFrame(frame);
@@ -315,12 +320,14 @@ export function PatternBg(
 			observer.disconnect();
 			if (frame != null) cancelAnimationFrame(frame);
 		};
-	}, [grad, velocity]);
+	}, [grad, opacity, velocity]);
 
 	return <div
 		className="absolute left-0 right-0 top-0 bottom-0 overflow-hidden mix-blend-screen -z-10"
 		ref={container} />;
 }
+
+const LazyScoreboardStatus = lazy(() => import("./scoreboard").then(v => v.ScoreboardStatus));
 
 function Status() {
 	const [sc, setSc] = useState<Scoreboard>();
@@ -332,7 +339,7 @@ function Status() {
 				<span className="h-4 aspect-square rounded-full bg-red-500 animate-pulse" />
 				<Text className="pt-0.5" v="md">Contest status</Text>
 			</div>
-			<ScoreboardStatus sc={sc} home />
+			<LazyScoreboardStatus sc={sc} home />
 		</div>
 	</Collapse>;
 }

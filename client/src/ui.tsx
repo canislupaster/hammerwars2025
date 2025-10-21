@@ -263,6 +263,15 @@ export const chipColors = {
 	teal: "dark:bg-[#64919b] dark:border-[#67cce0] bg-[#aedbe8] border-[#95e6fc]",
 };
 
+export const chipTextColors = {
+	red: "text-red-400",
+	green: "text-green-400",
+	blue: "text-sky-400",
+	gray: "text-gray-200",
+	purple: "text-purple-400",
+	teal: "text-teal-400",
+};
+
 export const chipColorKeys = Object.keys(chipColors) as (keyof typeof chipColors)[];
 
 export const Chip = (
@@ -1288,16 +1297,6 @@ export const useLg = () => {
 	return useMediaQuery(queries.lg, true);
 };
 
-export function useDebounce(debounceMs: number): ReturnType<typeof debounce> | undefined {
-	const [db, setDb] = useState<ReturnType<typeof debounce>>();
-	useEffect(() => {
-		const ndb = debounce(debounceMs);
-		setDb(ndb);
-		return () => ndb[Symbol.dispose]();
-	}, [debounceMs]);
-	return db;
-}
-
 export function ErrorPage({ error, retry }: { error?: Error; retry?: () => void }) {
 	return <div className="flex flex-col items-center gap-10 h-full py-10 justify-center mx-5">
 		<IconInfoTriangleFilled size={70} className="fill-red-500" />
@@ -1376,14 +1375,20 @@ export function listener<E extends HTMLElement, K extends keyof HTMLElementEvent
 	};
 }
 
-export function useDisposable(effect: () => Disposable | undefined, deps?: unknown[]) {
+export function useDisposable<T extends Disposable>(
+	effect: () => T | null,
+	deps?: unknown[],
+): T | null {
+	const [t, setT] = useState<T | null>(null);
 	useEffect(() => {
 		const obj = effect();
+		setT(obj);
 		return () => {
 			obj?.[Symbol.dispose]();
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, deps);
+	return t;
 }
 
 export type SetFn<T> = (cb: (old: T) => T) => void;
@@ -1451,7 +1456,7 @@ export function useValidity(
 	onBlur: (ev: FocusEvent) => void;
 	onChange: (ev: ChangeEvent<HTMLInputElement>) => void;
 } {
-	const db = useDebounce(200);
+	const db = useDisposable(() => debounce(200));
 	const [v, setV] = useState<{ editing: boolean; value: string | null }>({
 		editing: false,
 		value: null,

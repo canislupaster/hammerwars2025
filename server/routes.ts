@@ -463,6 +463,15 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			registrationEnds: z.number().nullable(),
 			registrationOpen: z.boolean(),
 			domJudgeCid: z.string(),
+			resolveIndex: z.object({ type: z.literal("index"), index: z.number() }).or(
+				z.object({
+					type: z.literal("problem"),
+					forward: z.boolean(),
+					team: z.number(),
+					prob: z.string(),
+				}),
+			).nullable(),
+			focusTeamId: z.number().nullable(),
 			team: z.object({
 				firewallEnabled: z.boolean(),
 				screenshotsEnabled: z.boolean(),

@@ -1,13 +1,11 @@
 import "disposablestack/auto";
 import { IconMail } from "@tabler/icons-preact";
 import { ComponentChildren, render } from "preact";
-import { LocationProvider, Route, Router, useLocation } from "preact-iso";
+import { lazy, LocationProvider, Route, Router, useLocation } from "preact-iso";
 import { useCallback, useEffect, useErrorBoundary, useMemo, useRef, useState } from "preact/hooks";
 import { APIError } from "../../shared/util";
 import { LocalStorage, useRequest } from "./clientutil";
 import { Home } from "./home";
-import { RegistrationEditor } from "./registration";
-import { ScoreboardPage } from "./scoreboard";
 import { Alert, Anchor, Button, Card, Container, GotoContext, Input, Loading, Text, ThemeContext,
 	useGoto, useTitle } from "./ui";
 
@@ -52,7 +50,7 @@ function RegisterPage() {
 	}, [call]);
 
 	return current?.type == "ok"
-		? <RegistrationEditor />
+		? import("./registration")
 		: current == null && !noSession
 		? <Loading />
 		: req.current != null && req.current.type == "ok"
@@ -209,6 +207,8 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 	</MainContainer>;
 }
 
+const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.ScoreboardPage));
+
 function InnerApp() {
 	const loc = useLocation();
 	const [oldRoute, setOldRoute] = useState<string | null>(null);
@@ -247,7 +247,7 @@ function InnerApp() {
 		<Route path="/register" component={RegisterPage} />
 		<Route path="/login" component={LoginPage} />
 		<Route path="/verify" component={VerifyPage} />
-		<Route path="/scoreboard" component={ScoreboardPage} />
+		<Route path="/scoreboard" component={LazyScoreboardPage} />
 		<Route default component={() =>
 			<ErrorPage errName="Page not found">
 				Go back <Anchor href="/">home</Anchor>.

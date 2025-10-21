@@ -135,7 +135,14 @@ export type ContestProperties = {
 	registrationEnds: number | null;
 	registrationOpen: boolean;
 	domJudgeCid: string;
-	resolveIndex: number | null;
+	// forward: skip until team/prob is over or AC, backward: stop at when team/prob occurs
+	resolveIndex: { type: "index"; index: number } | {
+		type: "problem";
+		forward: boolean;
+		team: number;
+		prob: string;
+	} | null;
+	focusTeamId: number | null;
 	team: TeamContestProperties;
 };
 
@@ -154,6 +161,7 @@ export type ScoreboardLastSubmission = {
 	incorrect: number;
 	first: boolean;
 	ac: boolean | null;
+	verdict: string | null;
 };
 
 export type ScoreboardTeam = Readonly<
@@ -168,6 +176,13 @@ export type ScoreboardTeam = Readonly<
 	}
 >;
 
+export function cmpTeamRankId(
+	[k1, a]: [number, ScoreboardTeam],
+	[k2, b]: [number, ScoreboardTeam],
+) {
+	return a.rank != b.rank ? a.rank-b.rank : k1-k2;
+}
+
 export type Scoreboard = Readonly<
 	{
 		contestName?: string;
@@ -177,10 +192,16 @@ export type Scoreboard = Readonly<
 		freezeTimeMs?: number;
 		endTimeMs?: number;
 		penaltyTimeMs?: number;
+		focusTeamId: number | null;
 		resolvingState: Readonly<
-			{ type: "resolved" } | { type: "resolving"; team: number; problem: string | null } | {
-				type: "unresolved";
-			}
+			{ type: "resolved"; index: number } | {
+				type: "resolving";
+				team: number;
+				problem: string | null;
+				sub: ScoreboardLastSubmission | null;
+				lastResolvedTeam: number | null;
+				index: number;
+			} | { type: "unresolved" }
 		>;
 	}
 >;

@@ -1,6 +1,7 @@
+import { isDeepStrictEqual } from "node:util";
 import { Queue } from "../shared/queue";
-import { delay, DOMJudgeActiveContest, getTeamLogoURL, handleNDJSONResponse, Scoreboard,
-	ScoreboardLastSubmission, ScoreboardTeam, throttle } from "../shared/util";
+import { ContestProperties, delay, DOMJudgeActiveContest, getTeamLogoURL, handleNDJSONResponse,
+	Scoreboard, ScoreboardLastSubmission, ScoreboardTeam, throttle } from "../shared/util";
 import { getDbCheck, getProperty, Mutable, propertiesChanged, transaction } from "./db";
 import { Account, BaseNotification, Judgement, Notification, Problem, Submission,
 	Team } from "./domjudge_types";
@@ -22,41 +23,13 @@ function cmpTeam(a: ScoreboardTeam, b: ScoreboardTeam) {
 	return a.solves != b.solves ? b.solves-a.solves : a.penaltyMinutes-b.penaltyMinutes;
 }
 
-function rescore(scoreboard: Scoreboard): Scoreboard {
-	const problemFirstTeam = new Map<string, [number, number]>();
-	const newTeams = [...scoreboard.teams.entries()].map(([k, v]) => {
-		const newProblems = [...v.problems.entries()].map(([k2, v2]) => {
-			const penaltyMs = v2.ac != true
-				? 0
-				: (scoreboard.startTimeMs == undefined
-					? 0
-					: (v2.submissionTimeMs-scoreboard.startTimeMs))+(scoreboard.penaltyTimeMs == undefined
-						? 0
-						: scoreboard.penaltyTimeMs*v2.incorrect);
+function rerank(scoreboard: Scoreboard): Scoreboard {
+	const sortedTeams = [...scoreboard.teams.entries()].sort((a, b) => cmpTeam(a[1], b[1]));
 
-			if (v2.ac == true) {
-				const firstTeam = problemFirstTeam.get(k2) ?? [Infinity, -1];
-				if (v2.submissionTimeMs < firstTeam[0]) {
-					problemFirstTeam.set(k2, [v2.submissionTimeMs, k]);
-				}
-			}
-
-			return [k2, { ...v2, penaltyMinutes: Math.floor(penaltyMs/(1000*60)) }] as const;
-		});
-
-		const penaltyMinutes = newProblems.reduce((a, b) => a+b[1].penaltyMinutes, 0);
-		const solves = newProblems.reduce((a, b) => a+(b[1].ac == true ? 1 : 0), 0);
-		return [k, { ...v, problems: new Map(newProblems), penaltyMinutes, solves }] as const;
-	}).sort((a, b) => cmpTeam(a[1], b[1]));
-
-	const rankedTeams = new Map(newTeams.map(([k, v], i) => {
-		return [k, {
-			...v,
-			rank: i == 0 ? 1 : newTeams[i-1][1].rank+(cmpTeam(newTeams[i-1][1], v) < 0 ? 1 : 0),
-			problems: new Map([...v.problems.entries()].map(([k2, v2]) => {
-				return [k2, problemFirstTeam.get(k2)?.[0] == k ? { ...v2, first: true } : v2];
-			})),
-		}] as const;
+	let rank = 1;
+	const rankedTeams = new Map(sortedTeams.map(([k, v], i) => {
+		if (i > 0 && cmpTeam(sortedTeams[i-1][1], v) < 0) rank++;
+		return [k, { ...v, rank }] as const;
 	}));
 
 	return { ...scoreboard, teams: new Map(rankedTeams) };
@@ -85,9 +58,7 @@ type DOMJudgeData = {
 	domJudgeIdToId: Map<string, number>;
 	isActive: boolean;
 	doUpdateTeams: boolean;
-	resolveIndex: number;
-	// flagged after resolve index changes
-	shouldUpdateJudgements: boolean;
+	resolveIndex: ContestProperties["resolveIndex"];
 };
 
 const makeDomJudgeData = (): DOMJudgeData => ({
@@ -100,15 +71,17 @@ const makeDomJudgeData = (): DOMJudgeData => ({
 	isActive: false,
 	lastUpdate: null,
 	doUpdateTeams: false,
-	resolveIndex: 0,
-	shouldUpdateJudgements: false,
+	resolveIndex: null,
 });
 
 const defaultScoreboard: Scoreboard = {
 	teams: new Map(),
 	problemNames: new Map(),
 	resolvingState: { type: "unresolved" },
+	focusTeamId: null,
 };
+
+class PollAbortError extends Error {}
 
 export class DOMJudge extends DisposableStack {
 	activeContest = new Mutable<DOMJudgeActiveContest>(null);
@@ -126,60 +99,78 @@ export class DOMJudge extends DisposableStack {
 		return this.#data.accounts.values().find(x => x.team_id == domJudgeId)?.username ?? null;
 	}
 
-	async #updateJudgements(scoreboard: Scoreboard) {
-		this.#data.shouldUpdateJudgements = false;
-
+	#updateJudgements(scoreboard: Scoreboard): Scoreboard {
+		type MutTeam = Omit<ScoreboardTeam, "problems"> & {
+			problems: Map<string, ScoreboardLastSubmission>;
+			penaltyMinutes: number;
+			solves: number;
+		};
 		const newTeams = new Map(
 			scoreboard.teams.entries().map((
 				[k, v],
-			): [
-				number,
-				Omit<ScoreboardTeam, "problems"> & { problems: Map<string, ScoreboardLastSubmission> },
-			] => [k, { ...v, problems: new Map() }]),
+			): [number, MutTeam] => [k, { ...v, problems: new Map(), penaltyMinutes: 0, solves: 0 }]),
 		);
 
-		const curJudgements = [
-			...this.#data.judgements.values().filter(x => x.current != false).map(j => {
-				const sub = this.#data.submission.get(j.submission_id);
-				if (!sub) return null;
+		const curJudgements = [...this.#data.judgements.values()].map(j => {
+			const sub = this.#data.submission.get(j.submission_id);
+			if (!sub) return null;
 
-				const prob = this.#data.problemInfo.get(sub.problem_id);
-				if (!prob) {
-					// problem removed from contest...
-					return null;
-				}
+			const prob = this.#data.problemInfo.get(sub.problem_id);
+			if (!prob) {
+				// problem removed from contest...
+				return null;
+			}
 
-				const id = this.#data.domJudgeIdToId.get(sub.team_id);
-				if (id == null) return null;
+			const id = this.#data.domJudgeIdToId.get(sub.team_id);
+			if (id == null) return null;
 
-				return {
-					teamId: id,
-					prob,
-					sub,
-					ac: j.end_time == null ? null : (j.judgement_type_id == "AC"),
-				};
-			}).filter(v => v != null),
-		];
+			return {
+				teamId: id,
+				prob,
+				time: Date.parse(sub.time),
+				ac: j.judgement_type_id == null ? null : (j.judgement_type_id == "AC"),
+				verdict: j.judgement_type_id,
+			};
+		}).filter(v => v != null).sort((a, b) => a.time-b.time);
 
 		type J = typeof curJudgements[number];
 		const preFreeze: J[] = [], postFreeze: J[] = [];
 		for (const j of curJudgements) {
-			const beforeFreeze = scoreboard.freezeTimeMs == undefined
-				|| Date.parse(j.sub.time) < scoreboard.freezeTimeMs;
+			const beforeFreeze = scoreboard.freezeTimeMs == undefined || j.time < scoreboard.freezeTimeMs;
 			(beforeFreeze ? preFreeze : postFreeze).push(j);
 		}
 
-		type MutTeam = typeof newTeams extends Map<unknown, infer T> ? T : never;
+		const problemsFirstSolved = new Set<string>();
 		const applyJudgement = (team: MutTeam, judgement: J) => {
 			const old = team.problems.get(judgement.prob.label);
-			if (old?.ac == true) return;
-			team.problems.set(judgement.prob.label, {
+			if (old?.ac == true) return null;
+
+			const incorrect = (old?.incorrect ?? 0)+(judgement.ac == false ? 1 : 0);
+			const penaltyMs = judgement.ac != true
+				? 0
+				: (scoreboard.startTimeMs == undefined
+					? 0
+					: Math.max(
+						0,
+						judgement.time-scoreboard.startTimeMs,
+					))+(scoreboard.penaltyTimeMs == undefined ? 0 : scoreboard.penaltyTimeMs*incorrect);
+
+			const sub: ScoreboardLastSubmission = {
 				ac: judgement.ac,
-				incorrect: (old?.incorrect ?? -1)+1,
-				submissionTimeMs: Date.parse(judgement.sub.time),
-				first: false,
-				penaltyMinutes: 0,
-			});
+				verdict: judgement.verdict ?? null,
+				incorrect,
+				submissionTimeMs: judgement.time,
+				penaltyMinutes: Math.floor(penaltyMs/1000/60),
+				first: judgement.ac == true && !problemsFirstSolved.has(judgement.prob.label),
+			};
+
+			team.problems.set(judgement.prob.label, sub);
+			if (sub.first) problemsFirstSolved.add(judgement.prob.label);
+
+			team.penaltyMinutes += sub.penaltyMinutes;
+			team.solves += sub.ac == true ? 1 : 0;
+
+			return sub;
 		};
 
 		for (const judgement of preFreeze) {
@@ -188,88 +179,128 @@ export class DOMJudge extends DisposableStack {
 			applyJudgement(team, judgement);
 		}
 
-		let resolvingState: Scoreboard["resolvingState"] = { type: "unresolved" };
-		const resolve = this.#data.resolveIndex;
-		if (resolve > 0) {
-			let resolved = 0;
-			const teamQueue = new Queue<[number, MutTeam]>((a, b) => cmpTeam(a[1], b[1]) > 0);
+		// needs to be widened, fuck u typescript
+		let resolvingState: Scoreboard["resolvingState"] = {
+			type: "unresolved",
+		} as Scoreboard["resolvingState"];
+
+		const i = this.#data.resolveIndex;
+		if (i != null && (i.type != "index" || i.index > 0)) {
+			let curIndex = 0;
+			let hitProblem = false, afterProblem = false;
+
+			const updateResolving = (
+				s: Omit<Scoreboard["resolvingState"] & { type: "resolving" }, "index" | "type">,
+			) => {
+				if (i.type == "problem") {
+					if (i.team == s.team && i.prob == s.problem && s.sub?.ac != true) hitProblem = true;
+					else if (hitProblem) afterProblem = true;
+					if (!i.forward && hitProblem) return true;
+					resolvingState = { ...s, type: "resolving", index: ++curIndex };
+					return i.forward && afterProblem;
+				} else if (i.type == "index") {
+					resolvingState = { ...s, type: "resolving", index: ++curIndex };
+					return curIndex >= i.index;
+				} else {
+					i satisfies never;
+					return true;
+				}
+			};
+
+			const teamQueue = new Queue<[number, MutTeam]>((a, b) => {
+				const v = cmpTeam(a[1], b[1]);
+				return v != 0 ? v > 0 : a[0] > b[0];
+			});
 			for (const t of newTeams) teamQueue.push(t);
 
 			const postFreezeByTeam = new Map<number, J[]>();
+			postFreeze.sort((a, b) =>
+				a.prob.label < b.prob.label ? -1 : a.prob.label > b.prob.label ? 1 : 0
+			);
 			for (const j of postFreeze) {
 				const a = postFreezeByTeam.get(j.teamId);
 				if (a != undefined) a.push(j);
 				else postFreezeByTeam.set(j.teamId, [j]);
 			}
 
-			while (postFreezeByTeam.size > 0) {
+			let lastResolvedTeam: number | null = null;
+			while (teamQueue.size() > 0) {
 				const [id, t] = teamQueue.pop();
-				if (resolvingState.type != "resolving" || resolvingState.team != id) {
-					resolvingState = { type: "resolving", team: id, problem: null };
-					if (++resolved >= resolve) break;
-				}
 
 				const js = postFreezeByTeam.get(id);
-				if (js == undefined || js.length == 0) continue;
-				resolvingState = { type: "resolving", team: id, problem: js[js.length-1].prob.label };
+				if (js == undefined || js.length == 0) {
+					lastResolvedTeam = id;
+					if (updateResolving({ team: id, problem: null, sub: null, lastResolvedTeam })) break;
+					continue;
+				}
 
-				if (++resolved >= resolve) break;
-				applyJudgement(t, js[js.length-1]);
-				if (++resolved >= resolve) break;
+				const prob = js[js.length-1].prob.label;
+				const old = t.problems.get(prob);
+				if (old?.ac != true) {
+					if (updateResolving({ team: id, problem: prob, sub: null, lastResolvedTeam })) break;
+					if (
+						updateResolving({
+							team: id,
+							problem: prob,
+							sub: applyJudgement(t, js[js.length-1]),
+							lastResolvedTeam,
+						})
+					) break;
+				}
+
 				js.pop();
-
 				teamQueue.push([id, t]);
 			}
 
-			if (resolved < resolve) resolvingState = { type: "resolved" };
+			if (teamQueue.size() == 0 && i.type == "index" && curIndex+1 <= i.index) {
+				resolvingState = { type: "resolved", index: curIndex+1 };
+			}
 		}
 
-		this.scoreboard.v = rescore({ ...scoreboard, teams: newTeams });
+		return { ...scoreboard, teams: newTeams, resolvingState };
 	}
 
 	// premature as hell
 	// but also kind of sanity preserving, bc otherwise this seems a little weird
 	// it just feels wrong to do all this shit every time someone e.g. changes
 	// their team name with zero protection
-	async #reallyUpdateTeams() {
-		this.#data.doUpdateTeams = false;
+	async #reallyUpdateTeams(sc: Scoreboard) {
 		const newScoreboard = await transaction(async trx => {
 			this.#data.domJudgeIdToId.clear();
 			const proms = [...this.#data.teams.values()].map(async team => {
-				const data = await trx.selectFrom("team").select(["id", "name"]).where(
-					"domJudgeId",
-					"=",
-					team.id,
-				).executeTakeFirst();
-				if (data == undefined) return null;
+				// const data = await trx.selectFrom("team").select(["id", "name"]).where(
+				// 	"domJudgeId",
+				// 	"=",
+				// 	team.id,
+				// ).executeTakeFirst();
+				// if (data == undefined) return null;
+				const data = { id: Number.parseInt(team.id), name: team.display_name ?? team.name };
 				this.#data.domJudgeIdToId.set(team.id, data.id);
 
-				const logoId = await trx.selectFrom("teamLogo").select("id").where("team", "=", data.id)
-					.executeTakeFirst();
+				// const logoId = await trx.selectFrom("teamLogo").select("id").where("team", "=", data.id)
+				// 	.executeTakeFirst();
 
-				const members = await trx.selectFrom("user").select("id").where("team", "=", data.id)
-					.execute();
+				// const members = await trx.selectFrom("user").select("id").where("team", "=", data.id)
+				// 	.execute();
 
 				return [data.id, {
 					rank: 0,
 					solves: 0,
 					penaltyMinutes: 0,
 					problems: new Map(),
-					members: (await Promise.all(members.map(async mem => {
-						return (await getDbCheck(trx, "user", mem.id)).data.submitted?.name;
-					}))).filter(x => x != null),
+					members: [],
+					// members: (await Promise.all(members.map(async mem => {
+					// 	return (await getDbCheck(trx, "user", mem.id)).data.submitted?.name;
+					// }))).filter(x => x != null),
 					name: data.name,
-					logo: logoId != null ? getTeamLogoURL(logoId.id) : null,
+					logo: team.photo?.[0].href ?? null,
 				}] as const;
 			});
 
-			return {
-				...this.scoreboard.v,
-				teams: new Map((await Promise.all(proms)).filter(x => x != null)),
-			};
+			return { ...sc, teams: new Map((await Promise.all(proms)).filter(x => x != null)) };
 		});
 
-		await this.#updateJudgements(newScoreboard);
+		return newScoreboard;
 	}
 
 	updateTeams() {
@@ -280,45 +311,78 @@ export class DOMJudge extends DisposableStack {
 
 	#domJudgeCid: string | null = null;
 	async #poll() {
-		const [cid, resolveIndex] = await transaction(
+		const [cid, resolveIndex, focusTeamId] = await transaction(
 			async trx => [
 				await getProperty(trx, "domJudgeCid"),
-				await getProperty(trx, "resolveIndex") ?? 0,
+				await getProperty(trx, "resolveIndex"),
+				await getProperty(trx, "focusTeamId"),
 			]
 		);
+
+		let sc = this.scoreboard.v;
+		if (focusTeamId != sc.focusTeamId) {
+			this.scoreboard.v = sc = { ...sc, focusTeamId };
+		}
 
 		if (cid != this.#domJudgeCid) {
 			this.#domJudgeCid = cid;
 			this.#data = makeDomJudgeData();
-			this.scoreboard.v = defaultScoreboard;
+			sc = defaultScoreboard;
 			this.activeContest.v = null;
 		}
 
-		if (resolveIndex != this.#data.resolveIndex) {
+		let shouldUpdateJudgements = false;
+		if (!isDeepStrictEqual(resolveIndex, this.#data.resolveIndex)) {
 			this.#data.resolveIndex = resolveIndex;
-			this.#data.shouldUpdateJudgements = true;
+			shouldUpdateJudgements = true;
 		}
 
 		if (this.#domJudgeCid == null) return;
 
-		const authHeader = `Basic ${
-			Buffer.from(`${env.DOMJUDGE_API_USER}:${env.DOMJUDGE_API_KEY}`).toString("base64")
-		}`;
-		const u = new URL(`api/v4/contests/${cid}/event-feed?stream=false`, env.DOMJUDGE_URL);
-
+		// const authHeader = `Basic ${
+		// 	Buffer.from(`${env.DOMJUDGE_API_USER}:${env.DOMJUDGE_API_KEY}`).toString("base64")
+		// }`;
+		const authHeader = `Basic ${Buffer.from(`admin:admin`).toString("base64")}`;
+		const u = new URL(
+			`https://www.domjudge.org/demoweb/api/v4/contests/nwerc18/event-feed?stream=false`,
+			env.DOMJUDGE_URL,
+		);
+		u.searchParams.append(
+			"types",
+			["contests", "problems", "state", "accounts", "teams", "submissions", "judgements"].join(","),
+		);
 		if (this.#data.lastUpdate != null) {
 			u.searchParams.append("since_token", this.#data.lastUpdate);
 		}
 
-		const res = await fetch(u, {
-			headers: { accept: "application/json", authorization: authHeader },
-		});
-		if (!res.ok) {
-			throw new Error(`domjudge event feed status ${res.status}: ${res.statusText}`);
+		let stream: AsyncGenerator<unknown> | null = null;
+		// skip fetch if we already have updates requested...
+		// uh makes resolver faster
+		if (!shouldUpdateJudgements && !this.#data.doUpdateTeams) {
+			const abort = new AbortController();
+			const listener = propertiesChanged.on(() => abort.abort(new PollAbortError()));
+			try {
+				const res = await fetch(u, {
+					headers: { accept: "application/json", authorization: authHeader },
+					signal: abort.signal,
+				});
+				if (!res.ok) {
+					throw new Error(`domjudge event feed status ${res.status}: ${res.statusText}`);
+				}
+
+				stream = handleNDJSONResponse(res);
+			} catch (e) {
+				if (e instanceof PollAbortError) {
+					await this.#poll();
+					return;
+				}
+				throw e;
+			} finally {
+				listener[Symbol.dispose]();
+			}
 		}
 
-		const stream = handleNDJSONResponse(res);
-		for await (const data of stream) {
+		for await (const data of stream ?? []) {
 			const notif = data as Notification;
 
 			if (notif.type == "contest") {
@@ -329,8 +393,8 @@ export class DOMJudge extends DisposableStack {
 				const endTimeMs = startTimeMs == undefined
 					? undefined
 					: startTimeMs+relTimeToMs(notif.data.duration);
-				this.scoreboard.v = rescore({
-					...this.scoreboard.v,
+				sc = {
+					...sc,
 					contestName: notif.data.formal_name ?? undefined,
 					penaltyTimeMs,
 					startTimeMs,
@@ -338,18 +402,17 @@ export class DOMJudge extends DisposableStack {
 					freezeTimeMs: endTimeMs == undefined || notif.data.scoreboard_freeze_duration == null
 						? undefined
 						: endTimeMs-relTimeToMs(notif.data.scoreboard_freeze_duration),
-				});
+				};
 			} else if (notif.type == "problems") {
 				updateMapFromNotification(this.#data.problemInfo, notif);
-				await this.#updateJudgements({
-					...this.scoreboard.v,
+				sc = {
+					...sc,
 					problemNames: new Map([...this.#data.problemInfo.values()].map(v => [v.label, v.name])),
-				});
+				};
+				shouldUpdateJudgements = true;
 			} else if (notif.type == "state") {
 				const active = notif.data.ended == null && notif.data.started != null;
-				this.activeContest.v = active
-					? { cid: this.#domJudgeCid, name: this.scoreboard.v.contestName }
-					: null;
+				this.activeContest.v = active ? { cid: this.#domJudgeCid, name: sc.contestName } : null;
 			} else if (notif.type == "accounts") {
 				updateMapFromNotification(this.#data.accounts, notif);
 			} else if (notif.type == "teams") {
@@ -357,17 +420,24 @@ export class DOMJudge extends DisposableStack {
 				this.updateTeams();
 			} else if (notif.type == "submissions") {
 				updateMapFromNotification(this.#data.submission, notif);
-				await this.#updateJudgements(this.scoreboard.v);
+				shouldUpdateJudgements = true;
 			} else if (notif.type == "judgements") {
 				updateMapFromNotification(this.#data.judgements, notif);
-				await this.#updateJudgements(this.scoreboard.v);
+				shouldUpdateJudgements = true;
 			}
 
 			if (notif.token != undefined) this.#data.lastUpdate = notif.token;
 		}
 
-		if (this.#data.doUpdateTeams) await this.#reallyUpdateTeams();
-		if (this.#data.shouldUpdateJudgements) await this.#updateJudgements(this.scoreboard.v);
+		if (this.#data.doUpdateTeams) {
+			sc = await this.#reallyUpdateTeams(sc);
+			this.#data.doUpdateTeams = false;
+			shouldUpdateJudgements = true;
+		}
+		if (shouldUpdateJudgements) sc = this.#updateJudgements(sc);
+		if (sc != this.scoreboard.v) {
+			this.scoreboard.v = rerank(sc);
+		}
 	}
 
 	start() {
@@ -380,7 +450,7 @@ export class DOMJudge extends DisposableStack {
 				const abort = new AbortController();
 				try {
 					await this.#poll();
-					await Promise.race([delay(200, abort.signal), propertiesChanged.wait(abort.signal)]);
+					await Promise.race([delay(300, abort.signal), propertiesChanged.wait(abort.signal)]);
 				} catch (e) {
 					console.error("domjudge listener error", e);
 					await delay(1000);
