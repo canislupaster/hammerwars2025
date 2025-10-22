@@ -1,10 +1,10 @@
-import { IconChevronDown, IconChevronRight } from "@tabler/icons-preact";
+import { IconCalendar, IconChevronDown, IconChevronRight } from "@tabler/icons-preact";
 import { ComponentChildren } from "preact";
 import { lazy } from "preact-iso";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
-import { fill, Scoreboard } from "../../shared/util";
-import { useFeed } from "./clientutil";
+import { fill, Scoreboard, timePlace } from "../../shared/util";
+import { useFeed, useRequest } from "./clientutil";
 import { Footer } from "./main";
 import { Anchor, bgColor, borderColor, Button, Card, Collapse, containerDefault, Countdown, ease,
 	interactiveContainerDefault, Text, textColor, useGoto, useLg, useTimeUntil } from "./ui";
@@ -33,32 +33,46 @@ function Section(
 
 type ScheduleItem = { time: string; title: string; note: string };
 
-const scheduleItems: ScheduleItem[] = [
-	{
-		time: "10:00 AM - 11:00 AM",
-		title: "Check-in",
-		note: "Confirm your team roster, grab your shirt and settle in before the welcome kicks off.",
-	},
-	{ time: "11:00 AM - 11:40 AM", title: "Opening ceremony and briefing", note: "" },
-	{ time: "11:40 AM - 12:40 PM", title: "Practice round and setup", note: "" },
-	{ time: "12:40 PM - 1:25 PM", title: "Lunch break", note: "Enjoy catered lunch." },
-	{
-		time: "1:30 PM - 6:30 PM",
-		title: "Main contest",
-		note: "The real contest and its online mirror take place.",
-	},
-	{ time: "6:35 PM - 7:30 PM", title: "Pizza, awards, and closing ceremony", note: "" },
-];
+const scheduleItems: ScheduleItem[] = [{
+	time: "10:00 AM - 11:00 AM",
+	title: "Check-in",
+	note: "Confirm your team roster, grab your shirt and settle in before the welcome kicks off.",
+}, {
+	time: "11:00 AM - 11:40 AM",
+	title: "Opening ceremony",
+	note: "Meet our sponsors and watch a brief tutorial.",
+}, {
+	time: "11:40 AM - 12:40 PM",
+	title: "Practice round and setup",
+	note:
+		"You'll have an hour to solve practice problems and setup your workstations for the real thing.",
+}, {
+	time: "12:40 PM - 1:25 PM",
+	title: "Lunch break",
+	note: "with a Panera sandwich of your choice.",
+}, {
+	time: "1:30 PM - 6:30 PM",
+	title: "Main contest",
+	note: "The real contest and its online mirror take place.",
+}, {
+	time: "6:35 PM - 7:30 PM",
+	title: "Pizza, awards, and closing ceremony",
+	note: "The scoreboard is resolved, winners are announced and solutions are released.",
+}];
 
 type FAQItem = { question: string; answer: ComponentChildren };
 
 const faqItems: FAQItem[] = [{
+	question: "Can we join remotely?",
+	answer: "Yes! Online teams may compete on DOMJudge.",
+}, {
 	question: "What do I need to bring?",
 	answer:
 		"Please bring scratch paper and writing utensils. You don't need a device; the contest will be held on lab computers.",
 }, {
-	question: "Can we join remotely?",
-	answer: "Yes! Online teams also compete through DOMJudge.",
+	question: "When/where is the event?",
+	answer:
+		`It will be held ${timePlace}. (The contest will be in the DSAI labs and the rest in CL50.)`,
 }, {
 	question: "What languages are supported?",
 	answer:
@@ -348,6 +362,7 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 	const goto = useGoto();
 	const lg2 = useLg();
 	const lg = lg2 || registerOnly == true;
+	const window = useRequest({ route: "registrationWindow", initRequest: true });
 	return <div className={twJoin("w-full relative", registerOnly == true ? "h-[20vh]" : "h-[30vh]")}>
 		<div
 			className={twJoin(
@@ -367,6 +382,9 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 					</span>{" "}
 					programming contest.
 				</p>
+				<p className="z-20 text-sm -mt-2 flex items-center gap-2">
+					<IconCalendar /> {timePlace}
+				</p>
 			</div>}
 			<div
 				className={twJoin(
@@ -382,7 +400,14 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 					iconRight={<IconChevronRight size={48} />}>
 					Register now
 				</Button>
-				<Text v="normal" className="drop-shadow-xl/80 z-20">Closes October 24th!</Text>
+				{window.current?.data.closes != null
+					&& <Text v="normal" className="drop-shadow-xl/80 z-20">
+						Closes{" "}
+						{new Date(window.current.data.closes).toLocaleDateString("en-US", {
+							day: "numeric",
+							month: "long",
+						})}!
+					</Text>}
 			</div>
 		</div>
 		<div className="absolute left-0 right-0 top-0 bottom-0 from-zinc-900 to-transparent bg-gradient-to-r z-10" />
@@ -395,13 +420,13 @@ export function Home() {
 	const bullet = [
 		/* eslint-disable react/jsx-key */
 		<>
-			<span className="text-xl font-big">5</span> hours.
+			<span className="text-xl font-big font-black">5</span> hours.
 		</>,
 		<>
-			<span className="text-xl font-big">12</span> problems.
+			<span className="text-xl font-big font-black">12</span> problems.
 		</>,
 		<>
-			<span className="text-xl font-big -mr-2">3</span> -person teams.
+			<span className="text-xl font-big font-black -mr-2">3</span> -person teams.
 		</>,
 		/* eslint-enable react/jsx-key */
 		"Held at Purdue University.",
@@ -450,10 +475,11 @@ export function Home() {
 
 		<Section inv>
 			<img src="/present.svg" className="absolute opacity-40 h-[110%] top-[10%] -left-10 -z-10" />
-			{squared(<Text v="big">Stuff</Text>)}
+			{squared(<Text v="big">Free stuff</Text>)}
 			<p>
-				In-person contestants will receive <b>free lunch/dinner/snacks, shirts, and</b>.
+				In-person contestants will receive <b>free shirts, lunch, dinner, coffee, and snacks</b>.
 			</p>
+			<p>First solvers will also get plushies and there'll be trophies for the winners.</p>
 		</Section>
 
 		<Section>

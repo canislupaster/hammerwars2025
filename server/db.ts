@@ -49,6 +49,7 @@ type DatabaseData = {
 	user: Omit<Database["user"], "data"> & { data: UserData };
 	session: Database["session"];
 	emailVerification: Database["emailVerification"];
+	announcement: Database["announcement"];
 };
 
 const db = new Kysely<Database>({
@@ -119,8 +120,6 @@ const migrator = new Migrator({
 								c.notNull()).addColumn("body", "text", c =>
 								c.notNull()).addColumn("team", "integer", c =>
 								c.references("team.id").onDelete("cascade")).execute();
-						await db.schema.createIndex("teamAnnouncement").on("announcement").column("team")
-							.execute();
 					},
 					async down(db) {
 						await db.schema.dropIndex("emailVerification").execute();
@@ -132,7 +131,6 @@ const migrator = new Migrator({
 						await db.schema.dropTable("teamScreenshot").execute();
 						await db.schema.dropTable("teamLogo").execute();
 						await db.schema.dropTable("announcement").execute();
-						await db.schema.dropTable("teamAnnouncement").execute();
 					},
 				} satisfies Migration,
 			};

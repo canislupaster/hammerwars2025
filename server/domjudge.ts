@@ -268,32 +268,30 @@ export class DOMJudge extends DisposableStack {
 		const newScoreboard = await transaction(async trx => {
 			this.#data.domJudgeIdToId.clear();
 			const proms = [...this.#data.teams.values()].map(async team => {
-				// const data = await trx.selectFrom("team").select(["id", "name"]).where(
-				// 	"domJudgeId",
-				// 	"=",
-				// 	team.id,
-				// ).executeTakeFirst();
-				// if (data == undefined) return null;
-				const data = { id: Number.parseInt(team.id), name: team.display_name ?? team.name };
+				const data = await trx.selectFrom("team").select(["id", "name"]).where(
+					"domJudgeId",
+					"=",
+					team.id,
+				).executeTakeFirst();
+				if (data == undefined) return null;
 				this.#data.domJudgeIdToId.set(team.id, data.id);
 
-				// const logoId = await trx.selectFrom("teamLogo").select("id").where("team", "=", data.id)
-				// 	.executeTakeFirst();
+				const logoId = await trx.selectFrom("teamLogo").select("id").where("team", "=", data.id)
+					.executeTakeFirst();
 
-				// const members = await trx.selectFrom("user").select("id").where("team", "=", data.id)
-				// 	.execute();
+				const members = await trx.selectFrom("user").select("id").where("team", "=", data.id)
+					.execute();
 
 				return [data.id, {
 					rank: 0,
 					solves: 0,
 					penaltyMinutes: 0,
 					problems: new Map(),
-					members: [],
-					// members: (await Promise.all(members.map(async mem => {
-					// 	return (await getDbCheck(trx, "user", mem.id)).data.submitted?.name;
-					// }))).filter(x => x != null),
+					members: (await Promise.all(members.map(async mem => {
+						return (await getDbCheck(trx, "user", mem.id)).data.submitted?.name;
+					}))).filter(x => x != null),
 					name: data.name,
-					logo: team.photo?.[0].href ?? null,
+					logo: logoId != null ? getTeamLogoURL(logoId.id) : null,
 				}] as const;
 			});
 
@@ -339,14 +337,10 @@ export class DOMJudge extends DisposableStack {
 
 		if (this.#domJudgeCid == null) return;
 
-		// const authHeader = `Basic ${
-		// 	Buffer.from(`${env.DOMJUDGE_API_USER}:${env.DOMJUDGE_API_KEY}`).toString("base64")
-		// }`;
-		const authHeader = `Basic ${Buffer.from(`admin:admin`).toString("base64")}`;
-		const u = new URL(
-			`https://www.domjudge.org/demoweb/api/v4/contests/nwerc18/event-feed?stream=false`,
-			env.DOMJUDGE_URL,
-		);
+		const authHeader = `Basic ${
+			Buffer.from(`${env.DOMJUDGE_API_USER}:${env.DOMJUDGE_API_KEY}`).toString("base64")
+		}`;
+		const u = new URL(`/api/v4/contests/${cid}/event-feed?stream=false`, env.DOMJUDGE_URL);
 		u.searchParams.append(
 			"types",
 			["contests", "problems", "state", "accounts", "teams", "submissions", "judgements"].join(","),

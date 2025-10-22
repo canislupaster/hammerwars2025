@@ -646,6 +646,51 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		},
 	});
 
+	const announcementEvent = new EventEmitter<{ team: number | null; id: number }>();
+	makeRoute(app, "announce", {
+		validator: z.object({
+			teams: z.literal("allTeams").or(z.int().array()),
+			title: z.string(),
+			body: z.string(),
+		}),
+		async handler(c, { teams, title, body }) {
+			await keyAuth(c, true);
+			await transaction(async trx => {
+				if (teams == "allTeams") {
+					const id = await setDb(trx, "announcement", null, {
+						team: null,
+						title,
+						body,
+						time: Date.now(),
+					});
+					announcementEvent.emit({ team: null, id });
+				} else {
+					for (const team of new Set(teams)) {
+						const id = await setDb(trx, "announcement", null, {
+							team,
+							title,
+							body,
+							time: Date.now(),
+						});
+						announcementEvent.emit({ team, id });
+					}
+				}
+			});
+		},
+	});
+
+	makeRoute(app, "getAnnouncement", {
+		validator: z.object({ team: z.int(), afterId: z.int() }),
+		async handler(c, { team, afterId }) {
+			await keyAuth(c, false);
+			return await transaction(trx => {
+				return trx.selectFrom("announcement").select(["id", "body", "title", "time"]).where(a =>
+					a("team", "=", team).or("team", "is", null)
+				).where("id", ">", afterId).orderBy("id", "asc").limit(1).executeTakeFirst();
+			}) ?? null;
+		},
+	});
+
 	makeRoute(app, "teamFeed", {
 		feed: true,
 		validator: z.object({ id: z.int() }),
@@ -662,15 +707,27 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					: null;
 			};
 
+			const getLastAnnouncement = async () => {
+				return (await transaction(trx =>
+					trx.selectFrom("announcement").select("id").where(a =>
+						a("team", "=", id).or("team", "is", null)
+					).orderBy("id", "desc").limit(1).executeTakeFirst()
+				))?.id ?? null;
+			};
+
 			type Update = { type: "cred" } | { type: "active"; active: DOMJudgeActiveContest } | {
 				type: "props";
 				props: TeamContestProperties;
-			};
+			} | { type: "announcement"; id: number };
 
 			const emitter = new EventEmitter<Update>();
 
 			this.use(teamChanged.on(v => {
 				if (v == id) emitter.emit({ type: "cred" });
+			}));
+
+			this.use(announcementEvent.on(({ team, id }) => {
+				if (team == null || team == id) emitter.emit({ type: "announcement", id });
 			}));
 
 			this.use(domJudge.activeContest.change.on(v => emitter.emit({ type: "active", active: v })));
@@ -696,6 +753,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				domJudgeCredentials: await getCred(),
 				domJudgeActiveContest: domJudge.activeContest.v,
 				teamProperties: (await transaction(trx => getProperties(trx))).team ?? defaultTeamProps,
+				lastAnnouncementId: await getLastAnnouncement(),
 			};
 
 			while (!abort.signal.aborted) {
@@ -707,6 +765,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				}
 				if (ev.type == "cred") state.domJudgeCredentials = await getCred();
 				else if (ev.type == "active") state.domJudgeActiveContest = ev.active;
+				else if (ev.type == "announcement") state.lastAnnouncementId = ev.id;
 				else state.teamProperties = ev.props;
 			}
 		},

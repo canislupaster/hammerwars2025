@@ -59,6 +59,8 @@ const client = new APIClient(process.env["API_URL"]!, {
 type Data = Partial<
 	{
 		teamId: number;
+		lastAnnouncementId: number;
+		latestAnnouncementId: number | null;
 		lastScreenshot: number;
 		screenshotsEnabled: boolean;
 		lastState: { user: string; pass: string };
@@ -425,6 +427,7 @@ async function processFeed() {
 		const vis = new Set(event.state.teamProperties.visibleDirectories);
 		await update({
 			firewall: event.state.teamProperties.firewallEnabled,
+			latestAnnouncementId: event.state.lastAnnouncementId,
 			visibleDirectories: vis,
 			screenshotsEnabled: event.state.teamProperties.screenshotsEnabled,
 			lastState: state,
@@ -499,3 +502,36 @@ async function copyRunner() {
 }
 
 register("bg", "copyRunner", copyRunner);
+
+async function announcement() {
+	if (
+		data.latestAnnouncementId == null
+		|| (data.lastAnnouncementId != null && data.lastAnnouncementId >= data.latestAnnouncementId)
+		|| data.teamId == null
+	) return;
+
+	const announcement = await client.request("getAnnouncement", {
+		team: data.teamId,
+		afterId: data.lastAnnouncementId ?? null,
+	});
+
+	if (announcement == null) {
+		console.error(
+			`expected announcement with id ${data.latestAnnouncementId} > ${
+				data.lastAnnouncementId ?? -1
+			}, none found`,
+		);
+		return;
+	}
+
+	const sec = Math.floor((Date.now()-announcement.time)/1000);
+	await runTeam("zenity", [
+		"--info",
+		"--text",
+		announcement.body,
+		"--title",
+		`${announcement.title}\n\nSent ${sec} seconds ago.`,
+	]);
+}
+
+register("update", "announcement", announcement);

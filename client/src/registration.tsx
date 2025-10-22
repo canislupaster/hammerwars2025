@@ -67,7 +67,7 @@ function GenerateTeamLogo({ refresh, disabled }: { refresh: () => void; disabled
 	</>;
 }
 
-export function ShirtPreview(
+function ShirtPreview(
 	{ info, setSeed, setHue }: {
 		info: Pick<API["getInfo"]["response"] & { type: "ok" }, "info" | "team">;
 		setSeed: (x: number) => void;
@@ -145,7 +145,7 @@ export function ShirtPreview(
 	</div>;
 }
 
-export function RegistrationEditor() {
+export default function RegistrationEditor() {
 	const [data, setData] = useState<API["getInfo"]["response"] | null>(null);
 	type InPerson = NonNullable<UserInfo["inPerson"]>;
 	const [userInfo, setUserInfo] = useState<PartialUserInfo | null>(null);
@@ -416,6 +416,12 @@ export function RegistrationEditor() {
 
 							<div className="flex flex-col gap-1">
 								<Text v="bold">Shirt size</Text>
+								<Text>
+									Shirt sizes are{" "}
+									<Anchor href="https://www.printful.com/custom/mens/t-shirts/unisex-staple-t-shirt-bella-canvas-3001">
+										unisex
+									</Anchor>, so be sure to select the right size.
+								</Text>
 								<Select
 									options={[{ label: "Unset", value: "unset" }, {
 										label: "I don't want a shirt",

@@ -108,6 +108,7 @@ export const resumeMaxSize = 1024*1024*5;
 export const maxPromptLength = 1024*4;
 export const screenshotMaxWidth = 1920;
 export const teamLimit = 3;
+export const timePlace = "November 22nd, 2025 in CL50 and DSAI";
 
 export const shirtSizes = ["xs", "s", "m", "l", "xl", "2xl", "3xl", "4xl", "5xl"] as const;
 
@@ -255,6 +256,7 @@ export type API = {
 	leaveTeam: unknown;
 	getProperties: { response: Partial<ContestProperties> };
 	setProperties: { request: Partial<ContestProperties> };
+	announce: { request: { teams: number[] | "allTeams"; title: string; body: string } };
 	getResumeId: { request: { id: number }; response: { base64: string } };
 	getTeamLogo: { request: { id: number }; response: { base64: string; mime: string } };
 	allData: {
@@ -280,8 +282,13 @@ export type API = {
 				domJudgeCredentials: { user: string; pass: string } | null;
 				domJudgeActiveContest: DOMJudgeActiveContest;
 				teamProperties: TeamContestProperties;
+				lastAnnouncementId: number | null;
 			};
 		};
+	};
+	getAnnouncement: {
+		request: { team: number; afterId: number | null };
+		response: { id: number; title: string; body: string; time: number } | null;
 	};
 	scoreboard: { feed: true; response: Scoreboard };
 	screenshot: { request: { team: number; data: string; mac: string } };

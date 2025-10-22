@@ -37,6 +37,8 @@ export function MainContainer({ children }: { children?: ComponentChildren }) {
 	</>;
 }
 
+const LazyRegistration = lazy(() => import("./registration").then(a => a.default));
+
 function RegisterPage() {
 	const [email, setEmail] = useState("");
 	const req = useRequest({ route: "register" });
@@ -50,7 +52,7 @@ function RegisterPage() {
 	}, [call]);
 
 	return current?.type == "ok"
-		? import("./registration")
+		? <LazyRegistration />
 		: current == null && !noSession
 		? <Loading />
 		: req.current != null && req.current.type == "ok"

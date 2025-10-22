@@ -356,25 +356,6 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 	ctx.strokeStyle = "white";
 	ctx.lineWidth = 20;
 	ctx.stroke();
-	// const safe = [
-	// 	[519,6307],[519,6714],[4857,6714],[4857,6307],[6657,6307],[6657,1114],[5204,1114],[5204,1781],[519,1781],[519,1437],[157,1437],[157,6307],[519,6307]
-	// ];
-
-	// const safeBounds = fill(2, m=>fill(2,i=>(m==1 ? Math.max : Math.min)(...safe.map(u=>u[i])))).flat();
-	// const targetArea = 0.2*(safeBounds[2]-safeBounds[0])*(safeBounds[3]-safeBounds[1]);
-	// const overlapRatio = 0.7;
-	// const maxRatio = 3;
-
-	// const sortedHull = polarSort(boundaryHull as V2[]);
-	// const tests: {score: number, rects: V2[][]}[] = [];
-	// for (let test=0; test<100; test++) {
-	// 	const curRects: V2[][] = [];
-	// 	for (let i=0; i<5; i++) {
-	// 		const rndPt = (): V2=>[safeBounds[0] + (safeBounds[2]-safeBounds[0])*this.rng.nextFloat(), safeBounds[1] + (safeBounds[3]-safeBounds[1])*this.rng.nextFloat()];
-	// 		const from = rndPt(), to=rndPt();
-
-	// 	}
-	// }
 }
 
 // color conversions by Kamil Kiełczewski
