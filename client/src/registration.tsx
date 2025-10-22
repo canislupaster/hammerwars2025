@@ -83,7 +83,7 @@ function ShirtPreview(
 	const [res, setRes] = useState<GenShirtResponse | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
-	const db = useDisposable(() => debounce(200));
+	const db = useDisposable(() => debounce(200), []);
 	useEffect(() => {
 		if (!db) return;
 		setRes(null);
@@ -282,7 +282,6 @@ export default function RegistrationEditor() {
 		showMissing && missing[x]
 		&& <Alert bad title={`${name} is required`} txt="Please specify it before submitting." />;
 	const anyMissing = Object.values(missing).some(x => x);
-	console.log(missing, data);
 
 	const toast = useToast();
 

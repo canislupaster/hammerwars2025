@@ -486,12 +486,19 @@ export function Home() {
 			<img src="/heart.svg"
 				className="absolute opacity-5 md:opacity-10 h-[120%] -top-[10%] -left-20 -z-10" />
 			{squared(<Text v="big">Sponsors</Text>)}
-			<div className="flex flex-row justify-center mt-10 w-full">
+			<div className="flex flex-row justify-center items-center mt-10 w-full flex-wrap gap-20">
 				<a href="https://hudsonrivertrading.com/">
 					<img src="/hrt-small.svg"
 						className={twJoin(
 							sponsorImageCls,
-							"drop-shadow-2xl drop-shadow-black hover:drop-shadow-[#FF8200]/50",
+							"drop-shadow-2xl drop-shadow-black hover:drop-shadow-[#FF8200]/50 max-w-xs",
+						)} />
+				</a>
+				<a href="https://www.roblox.com">
+					<img src="/roblox-logo.svg"
+						className={twJoin(
+							sponsorImageCls,
+							"drop-shadow-lg drop-shadow-black hover:drop-shadow-white/50",
 						)} />
 				</a>
 			</div>

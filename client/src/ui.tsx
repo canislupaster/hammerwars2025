@@ -1456,7 +1456,7 @@ export function useValidity(
 	onBlur: (ev: FocusEvent) => void;
 	onChange: (ev: ChangeEvent<HTMLInputElement>) => void;
 } {
-	const db = useDisposable(() => debounce(200));
+	const db = useDisposable(() => debounce(200), []);
 	const [v, setV] = useState<{ editing: boolean; value: string | null }>({
 		editing: false,
 		value: null,
