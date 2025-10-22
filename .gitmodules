@@ -1,0 +1,3 @@
+[submodule "devdocs"]
+	path = devdocs
+	url = https://github.com/canislupaster/hammerwars2025-devdocs.git
