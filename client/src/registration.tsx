@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { twJoin } from "tailwind-merge";
 import { randomShirtSeed } from "../../shared/genshirt";
 import { API, debounce, joinCodeRe, logoMaxSize, logoMimeTypes, maxPromptLength, PartialUserInfo,
-	resumeMaxSize, ServerResponse, shirtSizes, teamLimit, UserInfo, validDiscordRe,
+	resumeMaxSize, shirtSizes, teamLimit, UserInfo, validDiscordRe,
 	validNameRe } from "../../shared/util";
 import { apiBaseUrl, apiClient, useRequest } from "./clientutil";
 import type { GenShirtMessage, GenShirtResponse } from "./genshirtworker";
@@ -11,8 +11,7 @@ import GenShirtWorker from "./genShirtWorker?worker";
 import { MainContainer } from "./main";
 import { Alert, Anchor, AppTooltip, bgColor, borderColor, Button, Card, Checkbox, Collapse,
 	ConfirmModal, containerDefault, Countdown, Divider, FileInput, IconButton, Input, Loading, Modal,
-	Select, Text, Textarea, ThemeSpinner, useDisposable, useGoto, useTimeUntil, useToast,
-	useValidity } from "./ui";
+	Select, Text, Textarea, useDisposable, useGoto, useTimeUntil, useToast, useValidity } from "./ui";
 
 const toBase64 = (file: File) =>
 	new Promise<string>((res, rej) => {

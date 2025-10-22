@@ -1,8 +1,8 @@
 import { IconChevronDown, IconChevronUp, IconInfoCircleFilled, IconInfoTriangleFilled, IconLoader2,
 	IconProps, IconX } from "@tabler/icons-preact";
 import { cloneElement, ComponentChild, ComponentChildren, ComponentProps, ComponentType,
-	createContext, createElement, CSSProperties, FunctionComponent, h, HeadingHTMLAttributes,
-	HTMLAttributes, JSX, Ref, RefObject, VNode } from "preact";
+	createContext, createElement, CSSProperties, HeadingHTMLAttributes, HTMLAttributes, JSX, Ref,
+	RefObject, VNode } from "preact";
 import { ChangeEvent, createPortal, forwardRef } from "preact/compat";
 import { useCallback, useContext, useEffect, useErrorBoundary, useId, useMemo, useRef,
 	useState } from "preact/hooks";

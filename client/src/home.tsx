@@ -6,8 +6,8 @@ import { twJoin, twMerge } from "tailwind-merge";
 import { fill, Scoreboard, timePlace } from "../../shared/util";
 import { useFeed, useRequest } from "./clientutil";
 import { Footer } from "./main";
-import { Anchor, bgColor, borderColor, Button, Card, Collapse, containerDefault, Countdown, ease,
-	interactiveContainerDefault, Text, textColor, useGoto, useLg, useTimeUntil } from "./ui";
+import { Anchor, bgColor, borderColor, Button, Card, Collapse, containerDefault, ease,
+	interactiveContainerDefault, Text, textColor, useGoto, useLg } from "./ui";
 
 const squared = (x: ComponentChildren) =>
 	<div className="flex flex-row gap-4 items-center relative">

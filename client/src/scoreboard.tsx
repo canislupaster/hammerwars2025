@@ -1,17 +1,14 @@
 import { IconCheck, IconX } from "@tabler/icons-preact";
-import { ComponentChildren, createContext, Fragment, RefObject } from "preact";
-import { Dispatch, StateUpdater, useCallback, useContext, useEffect, useMemo, useRef,
+import { ComponentChildren } from "preact";
+import { Dispatch, StateUpdater, useCallback, useEffect, useMemo, useRef,
 	useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
-import { APIClient, cmpTeamRankId, ContestProperties, debounce, fill, mapWith, parseExtra,
-	Scoreboard, ScoreboardLastSubmission, ScoreboardTeam, stringifyExtra,
-	throttle } from "../../shared/util";
-import { apiBaseUrl, apiClient, LocalStorage, useFeed } from "./clientutil";
+import { APIClient, cmpTeamRankId, ContestProperties, fill, Scoreboard, ScoreboardLastSubmission,
+	ScoreboardTeam, throttle } from "../../shared/util";
+import { apiBaseUrl, LocalStorage, useFeed } from "./clientutil";
 import { Pattern2, PatternBg } from "./home";
-import replay from "./icpc2019_replay.ndjson?raw";
-import { borderColor, Button, chipColorKeys, chipColors, chipTextColors, Collapse, Countdown,
-	Divider, ease, Input, Loading, Modal, outlineColor, px, Text, ThemeSpinner, useAsync,
-	useDisposable, useShortcuts, useTimeUntil } from "./ui";
+import { Button, chipColorKeys, chipTextColors, Countdown, Divider, ease, Input, Loading, Modal, px,
+	Text, ThemeSpinner, useAsync, useDisposable, useShortcuts, useTimeUntil } from "./ui";
 
 type ScrollData = { addScroller: (x: HTMLElement, off: number) => () => void };
 
