@@ -11,9 +11,9 @@ export class APIError extends Error {
 
 export function fill<T>(len: number, v: T | ((idx: number) => T)): T[] {
 	if (typeof v == "function") {
-		return [...new Array(len) as unknown[]].map((_, i): T => (v as ((idx: number) => T))(i));
+		return new Array(len).fill(undefined).map((_, i): T => (v as ((idx: number) => T))(i));
 	}
-	return [...new Array(len) as unknown[]].map(() => v);
+	return (new Array<T>(len)).fill(v);
 }
 
 export function stringifyExtra(value: unknown) {
@@ -108,7 +108,7 @@ export const resumeMaxSize = 1024*1024*5;
 export const maxPromptLength = 1024*4;
 export const screenshotMaxWidth = 1920;
 export const teamLimit = 3;
-export const timePlace = "November 22nd, 2025 in CL50 and DSAI";
+export const timePlace = "November 15, 2025 in the Lawson Computer Science Building";
 
 export const shirtSizes = ["xs", "s", "m", "l", "xl", "2xl", "3xl", "4xl", "5xl"] as const;
 
@@ -119,9 +119,8 @@ export type UserInfo = {
 	shirtHue: number;
 	inPerson: {
 		needTransportation: boolean;
-		pizza: "cheese" | "pepperoni" | "sausage" | "none";
-		sandwich: "chickenBaconRancher" | "chipotleChickenAvoMelt" | "toastedGardenCaprese"
-			| "baconTurkeyBravo" | "none";
+		dinner: "cheese" | "pepperoni" | "sausage" | "none";
+		lunch: "chickenSandwich" | "spicyChickenSandwich" | "veggieWrap" | "none";
 		shirtSize: (typeof shirtSizes[number]) | "none";
 	} | null;
 };

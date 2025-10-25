@@ -33,32 +33,35 @@ function Section(
 
 type ScheduleItem = { time: string; title: string; note: string };
 
-const scheduleItems: ScheduleItem[] = [{
-	time: "10:00 AM - 11:00 AM",
-	title: "Check-in",
-	note: "Confirm your team roster, grab your shirt and settle in before the welcome kicks off.",
-}, {
-	time: "11:00 AM - 11:40 AM",
-	title: "Opening ceremony",
-	note: "Meet our sponsors and watch a brief tutorial.",
-}, {
-	time: "11:40 AM - 12:40 PM",
-	title: "Practice round and setup",
-	note:
-		"You'll have an hour to solve practice problems and setup your workstations for the real thing.",
-}, {
-	time: "12:40 PM - 1:25 PM",
-	title: "Lunch break",
-	note: "with a Panera sandwich of your choice.",
-}, {
-	time: "1:30 PM - 6:30 PM",
-	title: "Main contest",
-	note: "The real contest and its online mirror take place.",
-}, {
-	time: "6:35 PM - 7:30 PM",
-	title: "Pizza, awards, and closing ceremony",
-	note: "The scoreboard is resolved, winners are announced and solutions are released.",
-}];
+const scheduleItems: ScheduleItem[] = [
+	{
+		time: "10:00 AM - 11:00 AM",
+		title: "Check-in",
+		note: "Confirm your team roster, grab your shirt and settle in before the welcome kicks off.",
+	},
+	{
+		time: "11:00 AM - 11:40 AM",
+		title: "Opening ceremony",
+		note: "Meet our sponsors and watch a brief tutorial.",
+	},
+	{
+		time: "11:40 AM - 12:40 PM",
+		title: "Practice round and setup",
+		note:
+			"You'll have an hour to solve practice problems and setup your workstations for the real thing.",
+	},
+	{ time: "12:40 PM - 1:25 PM", title: "Lunch", note: "with a Panera sandwich of your choice." },
+	{
+		time: "1:30 PM - 6:30 PM",
+		title: "Main contest",
+		note: "The real contest and its online mirror take place.",
+	},
+	{
+		time: "6:35 PM - 7:30 PM",
+		title: "Pizza, awards, and closing ceremony",
+		note: "The scoreboard is resolved, winners are announced and solutions are released.",
+	},
+];
 
 type FAQItem = { question: string; answer: ComponentChildren };
 
@@ -72,7 +75,7 @@ const faqItems: FAQItem[] = [{
 }, {
 	question: "When/where is the event?",
 	answer:
-		`It will be held ${timePlace}. (The contest will be in the DSAI labs and the rest in CL50.)`,
+		`It will be held ${timePlace}. The opening ceremony will be in LWSN 1142, the contest in the Lawson labs, and the closing in the Commons.`,
 }, {
 	question: "What languages are supported?",
 	answer:
@@ -80,38 +83,16 @@ const faqItems: FAQItem[] = [{
 }, {
 	question: "Will there be food?",
 	answer:
-		"Snacks and coffee are in the morning, followed by lunch between the practice and official contest. We close out the night with pizza.",
+		"Coffee and donuts will be served in the morning, followed by lunch between the practice and official contest. We close out the night with pizza.",
 }];
 
-function FAQAccordion({ items }: { items: FAQItem[] }) {
-	const [openIndex, setOpenIndex] = useState<number | null>(0);
+function FAQ({ items }: { items: FAQItem[] }) {
 	return <div className="w-full flex flex-col gap-3">
 		{items.map((item, index) => {
-			const isOpen = openIndex === index;
-			return <div key={item.question} className="flex flex-col">
-				<button type="button" onClick={() => setOpenIndex(isOpen ? null : index)}
-					className={twMerge(
-						interactiveContainerDefault,
-						"flex flex-row items-center justify-between gap-4 px-4 py-3",
-						textColor.contrast,
-						isOpen && "border-b-0",
-						isOpen && borderColor.blue,
-					)}>
-					<span className="font-semibold text-lg">{item.question}</span>
-					<IconChevronDown size={20}
-						className={twJoin("transition-transform duration-200", isOpen ? "rotate-180" : "")} />
-				</button>
-				<Collapse open={isOpen}>
-					<div
-						className={twMerge(
-							containerDefault,
-							"border-t-0 p-3 pt-0",
-							isOpen && borderColor.blue,
-						)}>
-						<Text v="sm" className={twJoin("leading-relaxed", textColor.gray)}>{item.answer}</Text>
-					</div>
-				</Collapse>
-			</div>;
+			return <Card key={index} className="flex flex-col">
+				<Text v="md">{item.question}</Text>
+				<Text v="sm" className={twJoin("leading-relaxed", textColor.gray)}>{item.answer}</Text>
+			</Card>;
 		})}
 	</div>;
 }
@@ -276,7 +257,7 @@ export function PatternBg(
 			const yOff = (ny*sz-el.clientHeight)/2;
 			const layout = (t: number) => {
 				const sec = t/1000;
-				const dt = sec-last;
+				const dt = sec > last+.5 ? 0 : sec-last;
 				const flippedFrom: PatternArgs["flippedFrom"] = fill(ny, () => fill(nx, () => null));
 				patInst.current!.update({ dt, sec, ny, nx, flipped, flippedFrom });
 				for (let j = 0; j < ny; j++) {
@@ -383,7 +364,7 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 					programming contest.
 				</p>
 				<p className="z-20 text-sm -mt-2 flex items-center gap-2">
-					<IconCalendar /> {timePlace}
+					<IconCalendar /> {timePlace} (or online)
 				</p>
 			</div>}
 			<div
@@ -480,12 +461,18 @@ export function Home() {
 				In-person contestants will receive <b>free shirts, lunch, dinner, coffee, and snacks</b>.
 			</p>
 			<p>First solvers will also get plushies and there'll be trophies for the winners.</p>
+
+			<img src="/prizes.webp" className="md:-mx-10" />
 		</Section>
 
 		<Section>
 			<img src="/heart.svg"
 				className="absolute opacity-5 md:opacity-10 h-[120%] -top-[10%] -left-20 -z-10" />
 			{squared(<Text v="big">Sponsors</Text>)}
+			<Text>
+				This event wouldn't be possible without these incredible companies who recognize the value
+				of competitive programming!
+			</Text>
 			<div className="flex flex-row justify-center items-center mt-10 w-full flex-wrap gap-20">
 				<a href="https://hudsonrivertrading.com/">
 					<img src="/hrt-small.svg"
@@ -522,7 +509,7 @@ export function Home() {
 		<Section>
 			{squared(<Text v="big">FAQ</Text>)}
 			<div className="w-full mt-6">
-				<FAQAccordion items={faqItems} />
+				<FAQ items={faqItems} />
 			</div>
 		</Section>
 

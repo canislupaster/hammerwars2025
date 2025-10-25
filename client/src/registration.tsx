@@ -1,7 +1,7 @@
 import { IconClipboard, IconDice } from "@tabler/icons-preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { twJoin } from "tailwind-merge";
-import { randomShirtSeed } from "../../shared/genshirt";
+import { maxShirtSeed, randomShirtSeed } from "../../shared/genshirt";
 import { API, debounce, joinCodeRe, logoMaxSize, logoMimeTypes, maxPromptLength, PartialUserInfo,
 	resumeMaxSize, shirtSizes, teamLimit, UserInfo, validDiscordRe,
 	validNameRe } from "../../shared/util";
@@ -117,6 +117,8 @@ function ShirtPreview(
 		return () => worker.terminate();
 	}, [db, hue, name, seed, team, teamLogo]);
 
+	const validSeed = useValidity(seed.toString(), a => setSeed(parseInt(a, 10)));
+
 	return <div className="flex flex-col gap-1 w-full">
 		<Text v="md">Shirt preview</Text>
 		<Button type="button" onClick={() => {
@@ -125,7 +127,13 @@ function ShirtPreview(
 			Randomize seed
 		</Button>
 
-		<div className="flex flex-row gap-2 w-full mt-1">
+		<div className="flex flex-row flex-wrap gap-x-2 items-center mt-1 gap-y-1">
+			Seed
+			<Input {...validSeed} className="grow basis-40" type="number" step="1" min={0}
+				max={maxShirtSeed} />
+		</div>
+
+		<div className="flex flex-row gap-2 w-full mt-1 gap-y-1 flex-wrap">
 			<Text>Hue</Text>
 			<input value={hue} onInput={ev => setHue(ev.currentTarget.valueAsNumber)} type="range" min={0}
 				max={360} className="grow" />
@@ -269,8 +277,8 @@ export default function RegistrationEditor() {
 	const missing = useMemo(
 		() => ({
 			name: userInfo?.name == undefined,
-			pizza: userInfo?.inPerson != null && userInfo.inPerson.pizza == undefined,
-			sandwich: userInfo?.inPerson != null && userInfo.inPerson.sandwich == undefined,
+			dinner: userInfo?.inPerson != null && userInfo.inPerson.dinner == undefined,
+			lunch: userInfo?.inPerson != null && userInfo.inPerson.lunch == undefined,
 			shirtSize: userInfo?.inPerson != null && userInfo.inPerson.shirtSize == undefined,
 			resume: userInfo?.inPerson != null && data?.hasResume != true,
 			rules: userInfo?.inPerson == null && userInfo?.agreeRules != true,
@@ -391,9 +399,9 @@ export default function RegistrationEditor() {
 										{ label: "Pepperoni", value: "pepperoni" },
 										{ label: "Sausage", value: "sausage" },
 									] as const}
-									value={userInfo.inPerson?.pizza ?? "unset" as const}
-									setValue={v => modInPerson("pizza", v == "unset" ? undefined : v)} />
-								{makeMissingAlert("pizza", "Pizza choice")}
+									value={userInfo.inPerson?.dinner ?? "unset" as const}
+									setValue={v => modInPerson("dinner", v == "unset" ? undefined : v)} />
+								{makeMissingAlert("dinner", "Dinner choice")}
 							</div>
 
 							<div className="flex flex-col gap-1">
@@ -402,14 +410,16 @@ export default function RegistrationEditor() {
 									options={[
 										{ label: "Unset", value: "unset" },
 										{ label: "I don't want lunch", value: "none" },
-										{ label: "Chicken Bacon Rancher", value: "chickenBaconRancher" },
-										{ label: "Chipotle Chicken Avo Melt", value: "chipotleChickenAvoMelt" },
-										{ label: "Toasted Garden Caprese", value: "toastedGardenCaprese" },
-										{ label: "Bacon Turkey Bravo", value: "baconTurkeyBravo" },
+										{ label: "Chicken Sandwich", value: "chickenSandwich" },
+										{ label: "Spicy Chicken Sandwich", value: "spicyChickenSandwich" },
+										{
+											label: "Southwest Veggie Wrap (vegetarian, contains cheese)",
+											value: "veggieWrap",
+										},
 									] as const}
-									value={userInfo.inPerson?.sandwich ?? "unset" as const}
-									setValue={v => modInPerson("sandwich", v == "unset" ? undefined : v)} />
-								{makeMissingAlert("sandwich", "Sandwich choice")}
+									value={userInfo.inPerson?.lunch ?? "unset" as const}
+									setValue={v => modInPerson("lunch", v == "unset" ? undefined : v)} />
+								{makeMissingAlert("lunch", "Lunch choice")}
 							</div>
 
 							<div className="flex flex-col gap-1">

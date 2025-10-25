@@ -21,14 +21,8 @@ const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
 const inPersonSchema = z.object({
 	needTransportation: z.boolean(),
-	pizza: z.enum(["cheese", "pepperoni", "sausage", "none"]),
-	sandwich: z.enum([
-		"chickenBaconRancher",
-		"chipotleChickenAvoMelt",
-		"toastedGardenCaprese",
-		"baconTurkeyBravo",
-		"none",
-	]),
+	dinner: z.enum(["cheese", "pepperoni", "sausage", "none"]),
+	lunch: z.enum(["chickenSandwich", "spicyChickenSandwich", "veggieWrap", "none"]),
 	shirtSize: z.enum(shirtSizes),
 });
 const discordSchema = z.string().regex(new RegExp(validDiscordRe));

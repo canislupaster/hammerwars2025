@@ -111,7 +111,7 @@ const rot = (v: V3, ax: number, rad: number) => {
 const numCubes = 400;
 
 function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number[], dim: number[]) {
-	const shrink = 0.8, shrinkMax = 0.03, backGap = 0.02;
+	const shrink = 0.7, shrinkMax = 0.03, backGap = 0.04;
 
 	const cubes = new Queue<Cube>((a, b) => a.l > b.l);
 	cubes.push({ pos: add3s([-0.5, -0.5, -0.5], -shrinkMax/2), l: 1+shrinkMax-backGap });
@@ -219,14 +219,6 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 	const nlines = 16, gridSc = 1.1;
 	const zero: V3 = [0, 0, 0];
 	const drawStuff = () => {
-		const [gradStart, gradEnd] = [-1, 1].map(v => transform(add3s(zero, v/2)));
-		const grad = ctx.createLinearGradient(gradStart[0], gradStart[1], gradEnd[0], gradEnd[1]);
-		grad.addColorStop(0, "#1d2121");
-		grad.addColorStop(1, "#21b88d");
-		ptsPath(bounds);
-		ctx.fillStyle = grad;
-		ctx.fill();
-
 		for (let ax = 0; ax < 3; ax++) {
 			const xd: V3 = add3s(zero, -0.5);
 			const dir = fill(3, d => d == ax ? gridSc : 0) as V3;
@@ -262,17 +254,24 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 	};
 
 	const boundaryPts: V3[] = [];
-	for (let i = 0; i < 3; i++) {
+	for (let i = 0; i < 6; i++) {
 		const dir = fill(3, j => i%3 == j ? i >= 3 ? -1 : 1 : 0) as V3;
 		const [a, b] = [[1, 2], [0, 2], [0, 1]][i%3];
 		const dir1 = fill(3, d => d == a ? 1/2 : 0) as V3;
 		const dir2 = fill(3, d => d == b ? 1/2 : 0) as V3;
 		const cent = mul3(dir, 1/2);
-		boundaryPts.push(
-			...[[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([u, v]) =>
-				add3(cent, add3(mul3(dir1, u), mul3(dir2, v)))
-			).map(a => mul3(a, sc2)).map(transform),
-		);
+		const face = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([u, v]) =>
+			add3(cent, add3(mul3(dir1, u), mul3(dir2, v)))
+		).map(a => mul3(a, sc2)).map(transform);
+		if (i < 3) boundaryPts.push(...face);
+		else {
+			ptsPath(face);
+			const g = ctx.createLinearGradient(face[1][0], face[1][1], face[3][0], face[3][1]);
+			g.addColorStop(0, "#290505ff");
+			g.addColorStop(1, "#000000ff");
+			ctx.fillStyle = i == 3 ? g : "black";
+			ctx.fill();
+		}
 	}
 
 	ctx.save();
@@ -294,7 +293,7 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 		ctx.closePath();
 
 		ctx.strokeStyle = "white";
-		ctx.lineWidth = 50*r.l/(1+r.avg[2]);
+		ctx.lineWidth = 40*r.l/(1+0.1*r.avg[2]);
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
 		ctx.stroke();
@@ -325,12 +324,6 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 			ptsPath(rect);
 			ctx.fillStyle = "white";
 			ctx.fill();
-
-			ctx.globalCompositeOperation = "source-over";
-			ctx.strokeStyle = "white";
-			ctx.lineWidth = 20;
-			ctx.stroke();
-
 			ctx.restore();
 		}
 
@@ -345,9 +338,14 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 		ctx.globalCompositeOperation = "color";
 		ctx.fill();
 
-		ctx.fillStyle = i == 3 ? "#3A3A3A" : "#ffffffa3";
+		ctx.fillStyle = i == 3 ? "#242424ff" : "#ffffffff";
 		ctx.globalCompositeOperation = "overlay";
 		ctx.fill();
+
+		ctx.globalCompositeOperation = "source-over";
+		ctx.strokeStyle = "white";
+		ctx.lineWidth = 30;
+		ctx.stroke();
 	}
 
 	ctx.restore();
@@ -372,7 +370,7 @@ function hsv2rgb([h, s, v]: Readonly<V3>): V3 {
 
 export const shirtFontFamily = "IBM Plex Sans";
 export async function makeShirt(
-	{ team, name, seed, canvasConstructor, assets, quality, hue }: {
+	{ team, name, seed, canvasConstructor, assets, quality, hue, organizer }: {
 		team: string;
 		name: string;
 		hue: number;
@@ -380,34 +378,46 @@ export async function makeShirt(
 		canvasConstructor: (w: number, h: number) => OffscreenCanvas;
 		assets: { base: CanvasImageSource; bracket: CanvasImageSource; logo?: CanvasImageSource };
 		seed: number;
+		organizer?: boolean;
 	},
 ) {
 	const downScale = quality == "low" ? 8 : 1;
 	const totalW = 6900, totalH = 8284;
 	const realW = Math.round(totalW/downScale), realH = Math.round(totalH/downScale);
 	const canvas = canvasConstructor(realW, realH);
-	const ctx = canvas.getContext("2d")!;
+	const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 	ctx.scale(realW/totalW, realH/totalH);
 	ctx.drawImage(assets.base, 0, 0);
 
-	const filter = (x: (prev: number[]) => number[]) => {
+	const filter = (x: (prev: number[], coord: V2) => number[]) => {
+		// due to a bug in skia canvas
+		ctx.resetTransform();
 		const data = ctx.getImageData(0, 0, realW, realH);
-		for (let i = 0; i < data.data.length; i += 4) {
-			data.data.set(new Uint8ClampedArray(x([...data.data.slice(i, i+4)])), i);
+		for (let i = 0, j = 0; i < data.data.length; i += 4, j++) {
+			data.data.set(
+				new Uint8ClampedArray(
+					x([...data.data.slice(i, i+4)], [downScale*(j%realW), downScale*Math.floor(j/realW)]),
+				),
+				i,
+			);
 		}
 		ctx.putImageData(data, 0, 0);
+		ctx.scale(realW/totalW, realH/totalH);
 	};
 
-	filter(x => !x.slice(0, -1).some(v => v > 0) ? [0, 0, 0, 0] : x);
-
-	const off = [-1433.8, 1166] as const, dim = [10517.8, 5916.8] as const;
+	const off = [-1433.8, 1166+(organizer == true ? 1637-1352 : 0)] as const,
+		dim = [10517.8, 5916.8] as const;
 	const off2 = off.map(v => Math.max(0, v));
 	const dim2 = fill(2, i => Math.min(off[i]+dim[i], [totalW, totalH][i])-off2[i]);
 	off2[0] += 690-466+524-615+200;
 	off2[1] += 1634-1451-50+1175-1404-100;
 
 	const rng = new RNG(seed);
+
 	drawCubes(rng, ctx, off2, dim2);
+	filter(x => {
+		return !x.slice(0, -1).some(v => v > 50) ? [0, 0, 0, 0] : x;
+	});
 
 	const minTextSize = 100;
 	const condense = 4;
@@ -448,4 +458,5 @@ export async function makeShirt(
 	return canvas;
 }
 
-export const randomShirtSeed = () => Math.floor(Math.random()*(1<<31));
+export const maxShirtSeed = Number((1n<<31n)-1n);
+export const randomShirtSeed = () => Math.round(Math.random()*maxShirtSeed);
