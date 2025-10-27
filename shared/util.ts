@@ -99,7 +99,7 @@ export function parseExtra(str: string | null): unknown {
 	});
 }
 
-export const validNameRe = "^[A-Za-z0-9 _\\-]{5,30}$";
+export const validNameRe = "^[A-Za-z0-9 _\\-]{2,30}$";
 export const validDiscordRe = "^[A-Za-z0-9._]{2,32}$";
 export const joinCodeRe = "^\\d{10}$";
 export const logoMimeTypes = ["image/jpeg", "image/png"] as const;
@@ -111,6 +111,8 @@ export const teamLimit = 3;
 export const timePlace = "November 15, 2025 in the Lawson Computer Science Building";
 
 export const shirtSizes = ["xs", "s", "m", "l", "xl", "2xl", "3xl", "4xl", "5xl"] as const;
+
+export const feedHeartbeat = 1000, feedTimeout = 2000;
 
 export type UserInfo = {
 	name: string;
@@ -144,6 +146,7 @@ export type ContestProperties = {
 	} | null;
 	focusTeamId: number | null;
 	team: TeamContestProperties;
+	organizerTeamId: number | null;
 };
 
 export type Session = { id: number; key: string };
@@ -228,9 +231,11 @@ export type API = {
 	getInfo: {
 		response: {
 			info: PartialUserInfo;
+			organizer: boolean;
 			submitted: boolean;
 			lastEdited: number;
 			team: {
+				id: number;
 				name: string;
 				logo: string | null;
 				joinCode: string;
@@ -335,13 +340,13 @@ export async function* handleNDJSONResponse(resp: Response, signal?: AbortSignal
 			if (value != undefined) buf += value;
 			while (i < buf.length) {
 				if (buf[i++] == "\n") {
-					yield parseExtra(buf.slice(0, i-1));
+					yield buf.slice(0, i-1);
 					buf = buf.slice(i);
 					i = 0;
 				}
 			}
 			if (done) {
-				if (buf.length > 0) yield parseExtra(buf);
+				if (buf.length > 0) yield buf;
 				return;
 			}
 		}
@@ -368,6 +373,8 @@ export function delay(ms: number, abort?: AbortSignal): Promise<boolean> {
 }
 
 export const getTeamLogoURL = (logoId: number) => `teamLogo/${logoId}`;
+
+class TimeoutAbortError extends Error {}
 
 export class APIClient {
 	constructor(
@@ -407,11 +414,62 @@ export class APIClient {
 		return data.data;
 	}
 
+	async *#feedNoRetry<T extends keyof FeedAPI>(k: T, ...args: APIRequest<T>) {
+		const disp = new DisposableStack();
+		try {
+			const abort = new AbortController();
+			const f = args[args.length-1] as AbortSignal | undefined;
+			if (f != undefined) {
+				const cb = () => abort.abort();
+				f.addEventListener("abort", cb);
+				disp.defer(() => f.removeEventListener("abort", cb));
+			}
+
+			let timeout: number | null = null;
+			disp.defer(() => {
+				if (timeout != null) clearTimeout(timeout);
+			});
+			const resetTm = () => {
+				if (timeout != null) clearTimeout(timeout);
+				timeout = setTimeout(() => abort.abort(new TimeoutAbortError()), feedTimeout);
+			};
+			resetTm();
+
+			const resp = await this.#fetch(k, ...args);
+			if (!resp.ok) throw new Error(`feed ${k} responded with status ${resp.status}`);
+			for await (const x of handleNDJSONResponse(resp, abort.signal)) {
+				if (x == "") {
+					resetTm();
+					continue;
+				}
+				yield this.#handleResp(parseExtra(x) as ServerResponse<T>);
+			}
+
+			if (abort.signal.reason instanceof TimeoutAbortError) {
+				throw new TimeoutAbortError();
+			}
+		} finally {
+			disp.dispose();
+		}
+	}
+
 	async *feed<T extends keyof FeedAPI>(k: T, ...args: APIRequest<T>) {
-		const resp = await this.#fetch(k, ...args);
-		const f = args[args.length-1];
-		for await (const x of handleNDJSONResponse(resp, f instanceof AbortSignal ? f : undefined)) {
-			yield this.#handleResp(x as ServerResponse<T>);
+		let lastError = -Infinity;
+		const threshold = 2*feedTimeout;
+		while (true) {
+			try {
+				for await (const x of this.#feedNoRetry(k, ...args)) yield x;
+				return;
+			} catch (e) {
+				if (e instanceof TimeoutAbortError) {
+					if (Date.now()-lastError > threshold) {
+						lastError = Date.now();
+						continue;
+					}
+					throw new Error(`Feed ${k} timed out`);
+				}
+				throw e;
+			}
 		}
 	}
 

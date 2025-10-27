@@ -1229,7 +1229,10 @@ export function Container(
 		)}
 
 		<div
-			className={twMerge("font-body dark:text-gray-50 text-gray-950 min-h-dvh relative", className)}
+			className={twMerge(
+				"font-body dark:text-gray-100 text-gray-950 min-h-dvh relative",
+				className,
+			)}
 			{...props}>
 			{children}
 			<div className="bg-neutral-950 absolute left-0 top-0 bottom-0 right-0 -z-50" />

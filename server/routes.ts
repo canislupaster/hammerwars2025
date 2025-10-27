@@ -359,7 +359,10 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				const team = await trx.selectFrom("team").selectAll().where("joinCode", "==", req.joinCode)
 					.executeTakeFirst();
 				if (!team) throw err("Invalid join code.");
-				if ((await getMembers(trx, team.id)).length+1 > teamLimit) {
+				if (
+					(await getMembers(trx, team.id)).length+1 > teamLimit
+					&& team.id != await getProperty(trx, "organizerTeamId")
+				) {
 					return { full: true };
 				}
 				await setDb(trx, "user", userId, { team: team.id });
@@ -402,6 +405,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				const resume = await trx.selectFrom("resume").select("id").where("user", "=", userId)
 					.executeTakeFirst();
 				const data2 = {
+					organizer: team != null && team == await getProperty(trx, "organizerTeamId"),
 					info: data.info,
 					submitted: data.submitted != null,
 					lastEdited: data.lastEdited,
@@ -418,6 +422,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					return {
 						...data2,
 						team: {
+							id: team,
 							logo: logo != null ? getTeamLogoURL(logo.id) : null,
 							joinCode: teamData.joinCode,
 							name: teamData.name,
@@ -456,16 +461,17 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		validator: z.object({
 			registrationEnds: z.number().nullable(),
 			registrationOpen: z.boolean(),
+			organizerTeamId: z.int().nullable(),
 			domJudgeCid: z.string(),
-			resolveIndex: z.object({ type: z.literal("index"), index: z.number() }).or(
+			resolveIndex: z.object({ type: z.literal("index"), index: z.int() }).or(
 				z.object({
 					type: z.literal("problem"),
 					forward: z.boolean(),
-					team: z.number(),
+					team: z.int(),
 					prob: z.string(),
 				}),
 			).nullable(),
-			focusTeamId: z.number().nullable(),
+			focusTeamId: z.int().nullable(),
 			team: z.object({
 				firewallEnabled: z.boolean(),
 				screenshotsEnabled: z.boolean(),
@@ -628,12 +634,10 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 	makeRoute(app, "scoreboard", {
 		feed: true,
-		handler: async function* handler(api) {
+		handler: async function* handler(abort) {
 			yield domJudge.scoreboard.v;
-			const abort = new AbortController();
-			api.onAbort(() => abort.abort());
-			while (!abort.signal.aborted) {
-				const sc = await domJudge.scoreboard.change.wait(abort.signal);
+			while (!abort.aborted) {
+				const sc = await domJudge.scoreboard.change.wait(abort);
 				if (sc == null) return;
 				yield sc;
 			}
@@ -688,7 +692,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	makeRoute(app, "teamFeed", {
 		feed: true,
 		validator: z.object({ id: z.int() }),
-		handler: async function* handler(api, c, { id }) {
+		handler: async function* handler(abort, c, { id }) {
 			await keyAuth(c, false);
 
 			const getCred = async () => {
@@ -736,9 +740,6 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				emitter.emit({ type: "props", props: c.team ?? defaultTeamProps });
 			}));
 
-			const abort = new AbortController();
-			api.onAbort(() => abort.abort());
-
 			const queue: (typeof emitter extends EventEmitter<infer T> ? T : never)[] = [];
 
 			// if i just wait there's a race thing which is really dumb
@@ -750,7 +751,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				lastAnnouncementId: await getLastAnnouncement(),
 			};
 
-			while (!abort.signal.aborted) {
+			while (!abort.aborted) {
 				yield { type: "update", state };
 				const ev = queue.pop();
 				if (ev == undefined) {
@@ -780,7 +781,12 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			await sharp(Buffer.from(data, "base64")).resize(screenshotMaxWidth, null, {
 				withoutEnlargement: true,
 			}).heif({ compression: "av1" }).toFile(path);
-			await transaction(trx => setDb(trx, "teamScreenshot", null, { team, path, mac, time: t }));
+			await transaction(async trx => {
+				if ((await getProperty(trx, "team"))?.screenshotsEnabled != true) {
+					throw err("screenshots not enabled");
+				}
+				await setDb(trx, "teamScreenshot", null, { team, path, mac, time: t });
+			});
 		},
 	});
 

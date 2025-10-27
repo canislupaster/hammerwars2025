@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "run": "pnpm exec tsx ./main.ts"
+    "run": "pnpm exec tsx --env-file=.env ./main.ts"
   },
   "type": "module",
   "keywords": [],

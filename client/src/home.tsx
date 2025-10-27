@@ -1,4 +1,4 @@
-import { IconCalendar, IconChevronDown, IconChevronRight } from "@tabler/icons-preact";
+import { IconCalendar, IconChevronRight } from "@tabler/icons-preact";
 import { ComponentChildren } from "preact";
 import { lazy } from "preact-iso";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -6,14 +6,14 @@ import { twJoin, twMerge } from "tailwind-merge";
 import { fill, Scoreboard, timePlace } from "../../shared/util";
 import { useFeed, useRequest } from "./clientutil";
 import { Footer } from "./main";
-import { Anchor, bgColor, borderColor, Button, Card, Collapse, containerDefault, ease,
-	interactiveContainerDefault, Text, textColor, useGoto, useLg } from "./ui";
+import { Anchor, bgColor, Button, Card, Collapse, ease, Text, textColor, useGoto, useLg,
+	useMd } from "./ui";
 
 const squared = (x: ComponentChildren) =>
-	<div className="flex flex-row gap-4 items-center relative">
-		<div className="w-8 aspect-square bg-neutral-400 mb-1" />
-		<div className="absolute my-auto left-10 w-8 aspect-square bg-neutral-400/30 mb-1" />
-		<div className="absolute my-auto left-20 w-8 aspect-square bg-neutral-400/10 mb-1" />
+	<div className="flex flex-row md:gap-4 gap-2 items-start relative">
+		<div className="w-8 aspect-square bg-neutral-400 mb-1 shrink-0" />
+		<div className="absolute my-auto left-10 w-8 top-0 aspect-square bg-neutral-400/30 mb-1" />
+		<div className="absolute my-auto left-20 w-8 top-0 aspect-square bg-neutral-400/10 mb-1" />
 		<div className="z-10">{x}</div>
 	</div>;
 
@@ -48,9 +48,9 @@ const scheduleItems: ScheduleItem[] = [
 		time: "11:40 AM - 12:40 PM",
 		title: "Practice round and setup",
 		note:
-			"You'll have an hour to solve practice problems and setup your workstations for the real thing.",
+			"You'll have an hour to solve practice problems and setup your workstation for the real thing.",
 	},
-	{ time: "12:40 PM - 1:25 PM", title: "Lunch", note: "with a Panera sandwich of your choice." },
+	{ time: "12:40 PM - 1:25 PM", title: "Lunch", note: "Chick-fil-a sandwich of your choice." },
 	{
 		time: "1:30 PM - 6:30 PM",
 		title: "Main contest",
@@ -344,29 +344,33 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 	const lg2 = useLg();
 	const lg = lg2 || registerOnly == true;
 	const window = useRequest({ route: "registrationWindow", initRequest: true });
-	return <div className={twJoin("w-full relative", registerOnly == true ? "h-[20vh]" : "h-[30vh]")}>
+	return <div className={twJoin("w-full relative")}>
 		<div
 			className={twJoin(
-				lg
-					? "z-50 flex flex-row px-10 items-center h-full"
-					: "flex flex-col gap-5 items-center h-full",
+				"py-4",
+				registerOnly == true ? "min-h-[20vh]" : "min-h-[30vh]",
+				lg ? "z-50 flex flex-row px-10 items-center" : "flex flex-col gap-2 items-center",
 				!lg || registerOnly == true ? "justify-center" : "justify-between",
 			)}>
-			{registerOnly != true && <div className="flex flex-col gap-4">
-				<h1 className="lg:text-6xl text-5xl z-20 animate-fade-in">
-					HAMMERWARS<span className="font-black anim-delay animate-fade-in">2025</span>
-				</h1>
-				<p className="z-20 text-xl">
-					The{" "}
-					<span className="bg-clip-text bg-gradient-to-r from-amber-300 to-yellow-400 text-transparent font-bold">
-						Purdue
-					</span>{" "}
-					programming contest.
-				</p>
-				<p className="z-20 text-sm -mt-2 flex items-center gap-2">
-					<IconCalendar /> {timePlace} (or online)
-				</p>
-			</div>}
+			{registerOnly != true
+				&& <div className={twJoin("flex flex-col gap-4", lg ? "items-start" : "px-3 items-center")}>
+					<h1 className="lg:text-6xl md:text-5xl sm:text-3xl text-2xl z-20 animate-fade-in">
+						HAMMERWARS<span className="font-black anim-delay animate-fade-in">2025</span>
+					</h1>
+					<p className="z-20 sm:text-xl text-lg md:mt-0 -mt-2">
+						The{" "}
+						<span className="bg-clip-text bg-gradient-to-r from-amber-300 to-yellow-400 text-transparent font-bold">
+							Purdue
+						</span>{" "}
+						programming contest.
+					</p>
+					<p className="z-20 text-sm -mt-2 flex items-center gap-2">
+						<span className="shrink-0">
+							<IconCalendar />
+						</span>{" "}
+						{timePlace} (or online)
+					</p>
+				</div>}
 			<div
 				className={twJoin(
 					"flex flex-col gap-2 pt-2 items-center",
@@ -375,7 +379,7 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 				<Button
 					className={twJoin(
 						"z-50 rounded-none border-4",
-						lg ? "text-3xl p-5 pr-1" : "text-xl p-3 pr-0 py-1",
+						lg ? "md:text-3xl text-2xl p-5 pr-1" : "text-xl p-3 pr-0 py-1",
 					)}
 					onClick={() => goto("/register")}
 					iconRight={<IconChevronRight size={48} />}>
@@ -409,9 +413,10 @@ export function Home() {
 		<>
 			<span className="text-xl font-big font-black -mr-2">3</span> -person teams.
 		</>,
+		"Held at Purdue University, with an online division.",
 		/* eslint-enable react/jsx-key */
-		"Held at Purdue University.",
 	];
+	const md = useMd();
 	return <>
 		<Hero />
 
@@ -425,7 +430,7 @@ export function Home() {
 				at Purdue University is thrilled to announce our annual programming contest, now with an
 				online division.
 			</p>
-			<div className="mt-2 leading-10">
+			<div className="mt-2 flex flex-col gap-1">
 				{bullet.map((v, i) =>
 					<div key={i} className="flex flex-row gap-2 items-baseline">
 						<span className="bg-white h-5 aspect-square" style={{ opacity: 1-i/bullet.length }} />
@@ -458,11 +463,11 @@ export function Home() {
 			<img src="/present.svg" className="absolute opacity-40 h-[110%] top-[10%] -left-10 -z-10" />
 			{squared(<Text v="big">Free stuff</Text>)}
 			<p>
-				In-person contestants will receive <b>free shirts, lunch, dinner, coffee, and snacks</b>.
+				In-person contestants will receive <b>free shirts, lunch, dinner, coffee and snacks</b>.
 			</p>
 			<p>First solvers will also get plushies and there'll be trophies for the winners.</p>
 
-			<img src="/prizes.webp" className="md:-mx-10" />
+			<img src="/prizes.webp" className="md:-mx-10 scale-110" />
 		</Section>
 
 		<Section>
@@ -473,19 +478,19 @@ export function Home() {
 				This event wouldn't be possible without these incredible companies who recognize the value
 				of competitive programming!
 			</Text>
-			<div className="flex flex-row justify-center items-center mt-10 w-full flex-wrap gap-20">
+			<div className="flex flex-row justify-center items-center mt-10 w-full flex-wrap gap-x-20 gap-y-10">
 				<a href="https://hudsonrivertrading.com/">
 					<img src="/hrt-small.svg"
 						className={twJoin(
 							sponsorImageCls,
-							"drop-shadow-2xl drop-shadow-black hover:drop-shadow-[#FF8200]/50 max-w-xs",
+							"drop-shadow-2xl drop-shadow-black hover:drop-shadow-[#FF8200]/50 max-w-xs max-h-[20vh]",
 						)} />
 				</a>
 				<a href="https://www.roblox.com">
 					<img src="/roblox-logo.svg"
 						className={twJoin(
 							sponsorImageCls,
-							"drop-shadow-lg drop-shadow-black hover:drop-shadow-white/50",
+							"drop-shadow-lg drop-shadow-black hover:drop-shadow-white/50 max-h-[10vh]",
 						)} />
 				</a>
 			</div>
@@ -521,13 +526,11 @@ export function Home() {
 				contest for 100 participants with $2000 in prizes, free shirts, and more.{" "}
 				<b>But this year will be even better.</b>
 			</Text>
-			<div className="flex flex-row justify-center gap-5 flex-wrap mt-8">
+			<div className="flex flex-col md:flex-row justify-center gap-5 flex-wrap mt-8">
 				{fill(3, i =>
-					<img key={i} src={`/last/${i+1}.jpg`} className="max-w-sm"
-						style={{
-							transform: `rotateZ(${[2, -3, -2][i]}deg)`,
-							scale: `${[110, 90, 100][i]}%`,
-						}} />)}
+					<img key={i} src={`/last/${i+1}.jpg`} className="max-w-full md:max-w-sm" style={!md
+						? undefined
+						: { transform: `rotateZ(${[2, -3, -2][i]}deg)`, scale: `${[110, 90, 100][i]}%` }} />)}
 			</div>
 			<Anchor href="https://events.purduehackers.com/events/special/hammerwars/2023"
 				className="self-center mt-2">

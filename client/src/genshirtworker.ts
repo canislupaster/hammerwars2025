@@ -7,6 +7,7 @@ export type GenShirtMessage = {
 	seed: number;
 	hue: number;
 	quality: "low" | "high";
+	organizer: boolean;
 };
 
 export type GenShirtResponse = { type: "success"; data: ImageData } | {
@@ -31,16 +32,19 @@ if (typeof WorkerGlobalScope != "undefined" && self instanceof WorkerGlobalScope
 		try {
 			const canvas = await makeShirt({
 				canvasConstructor: (w, h) => new OffscreenCanvas(w, h),
-				team: msg.team,
+				team: msg.organizer ? "" : msg.team,
 				name: msg.name,
 				seed: msg.seed,
 				hue: msg.hue,
 				quality: msg.quality,
 				assets: {
 					logo: msg.logo != undefined ? await loadImage(msg.logo) : undefined,
-					base: await loadImage("/shirtbase.png"),
+					base: msg.organizer
+						? await loadImage("/shirtbase-organizer.png")
+						: await loadImage("/shirtbase.png"),
 					bracket: await loadImage("/shirtbracket.png"),
 				},
+				organizer: msg.organizer,
 			});
 
 			const data = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height);

@@ -11,7 +11,7 @@ import { Alert, Anchor, Button, Card, Container, GotoContext, Input, Loading, Te
 
 export function Footer() {
 	return <div className="flex flex-col items-center w-full py-5 px-5">
-		<Text v="sm">
+		<Text v="sm" className="text-center">
 			Created by the <Anchor href="https://purduecpu.com">Competitive Programmers Union</Anchor>
 			{" "}
 			at Purdue University.
@@ -32,7 +32,7 @@ export function MainContainer({ children }: { children?: ComponentChildren }) {
 				<span className="block font-black anim-delay animate-flip-in">2025</span>
 			</h1>
 		</div>
-		<div className="my-5 max-w-xl w-full flex flex-col items-center gap-3 p-1">{children}</div>
+		<div className="my-5 max-w-xl w-full flex flex-col items-center gap-3 p-1 px-2">{children}</div>
 		<Footer />
 	</>;
 }
@@ -211,6 +211,11 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 
 const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.ScoreboardPage));
 
+const NotFound = () =>
+	<ErrorPage errName="Not found">
+		Go back <Anchor href="/">home</Anchor>.
+	</ErrorPage>;
+
 function InnerApp() {
 	const loc = useLocation();
 	const [oldRoute, setOldRoute] = useState<string | null>(null);
@@ -241,7 +246,9 @@ function InnerApp() {
 		if (err instanceof APIError && err.error.type == "needLogin") {
 			return <LoginPage failed done={retry} />;
 		}
-		return <ErrorPage err={err} reset={retry} />;
+		return <ErrorPage err={err} reset={retry}>
+			Go back <Anchor href="/">home</Anchor>.
+		</ErrorPage>;
 	}
 
 	return <Router>
@@ -250,10 +257,7 @@ function InnerApp() {
 		<Route path="/login" component={LoginPage} />
 		<Route path="/verify" component={VerifyPage} />
 		<Route path="/scoreboard" component={LazyScoreboardPage} />
-		<Route default component={() =>
-			<ErrorPage errName="Page not found">
-				Go back <Anchor href="/">home</Anchor>.
-			</ErrorPage>} />
+		<Route default component={NotFound} />
 	</Router>;
 }
 

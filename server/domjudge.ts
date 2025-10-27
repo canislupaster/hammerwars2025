@@ -349,7 +349,7 @@ export class DOMJudge extends DisposableStack {
 			u.searchParams.append("since_token", this.#data.lastUpdate);
 		}
 
-		let stream: AsyncGenerator<unknown> | null = null;
+		let stream: AsyncGenerator<string> | null = null;
 		// skip fetch if we already have updates requested...
 		// uh makes resolver faster
 		if (!shouldUpdateJudgements && !this.#data.doUpdateTeams) {
@@ -377,7 +377,7 @@ export class DOMJudge extends DisposableStack {
 		}
 
 		for await (const data of stream ?? []) {
-			const notif = data as Notification;
+			const notif = JSON.parse(data) as Notification;
 
 			if (notif.type == "contest") {
 				const penaltyTimeMs = notif.data.penalty_time*60*1000;

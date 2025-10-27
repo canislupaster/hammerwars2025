@@ -10,7 +10,7 @@ const mul = (a: V2, c: number): V2 => [a[0]*c, a[1]*c];
 
 const EPS = 0.1;
 
-const intersect = (a: V2, b: V2, c: V2, d: V2) => {
+const _intersect = (a: V2, b: V2, c: V2, d: V2) => {
 	b = sub(b, a);
 	c = sub(c, a);
 	d = sub(d, a);
@@ -37,7 +37,7 @@ const polarSort = (pts: V2[]) =>
 		return (ay == by || ay == 0 || by == 0) ? -det(a, b) : by-ay;
 	});
 
-const cut = (pts: V2[], a: V2, b: V2) => {
+const _cut = (pts: V2[], a: V2, b: V2) => {
 	polarSort(pts);
 	let f = false;
 	const out = [];
@@ -96,7 +96,7 @@ type V3 = [number, number, number];
 type Cube = { pos: V3; l: number };
 
 const add3 = ([a, b, c]: V3, [u, v, w]: V3): V3 => [a+u, b+v, c+w];
-const dot3 = ([a, b, c]: V3, [u, v, w]: V3): number => a*u+b*v+c*w;
+const _dot3 = ([a, b, c]: V3, [u, v, w]: V3): number => a*u+b*v+c*w;
 const add3s = ([a, b, c]: V3, s: number): V3 => [a+s, b+s, c+s];
 const mul3 = ([a, b, c]: V3, s: number): V3 => [a*s, b*s, c*s];
 const rot = (v: V3, ax: number, rad: number) => {
@@ -204,10 +204,6 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 		ctx.stroke();
 	};
 
-	const bounds = [pos, [pos[0]+dim[0], pos[1]], [pos[0]+dim[0], pos[1]+dim[1]], [
-		pos[0],
-		pos[1]+dim[1],
-	]];
 	const ptsPath = (coords: number[][]) => {
 		ctx.beginPath();
 		ctx.moveTo(coords[0][0], coords[0][1]);

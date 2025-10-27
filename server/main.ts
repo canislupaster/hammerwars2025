@@ -9,11 +9,13 @@ import { Buffer } from "node:buffer";
 import { argon2, randomBytes, timingSafeEqual } from "node:crypto";
 import { OpenAI } from "openai";
 import z from "zod";
-import { API, APIError, parseExtra, ServerResponse, Session,
-	stringifyExtra } from "../shared/util.ts";
-import { getDb, transaction } from "./db.ts";
+import {
+	API, APIError, delay, feedHeartbeat, parseExtra, ServerResponse, Session,
+	stringifyExtra
+} from "../shared/util.ts";
+import { EventEmitter, getDb, transaction } from "./db.ts";
 import "./routes.ts";
-import { StreamingApi } from "hono/utils/stream";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { makeRoutes } from "./routes.ts";
 
@@ -63,7 +65,7 @@ async function parse<R>(t: z.ZodType<R>, c: Context): Promise<R> {
 }
 
 type APIInputContext<K extends keyof API> = API[K] extends { feed: true; response: unknown }
-	? [StreamingApi, Context]
+	? [AbortSignal, Context]
 	: [Context];
 
 type APIRouteParameters<K extends keyof API> = {
@@ -94,13 +96,12 @@ function errToJson(err: unknown): ServerResponse<never> & { type: "error" } {
 }
 
 type RateLimitBucket = { since: number; times: number };
-const trustedProxy = env.TRUSTED_PROXY;
 
 export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, data: APIRoute[K]) {
 	const buckets = new Map<string, RateLimitBucket>();
-	app.post(`/${route}`, async c => {
+	app.post(route, async c => {
 		let ip = getConnInfo(c).remote.address;
-		if (trustedProxy != undefined && ip == trustedProxy) {
+		if (env.TRUSTED_PROXY != undefined && ip == env.TRUSTED_PROXY) {
 			ip = c.req.raw.headers.get("x-forwarded-for")?.split(",")?.[0]?.trim();
 		}
 		if (ip == undefined) throw err("Couldn't determine remote IP address.");
@@ -114,6 +115,7 @@ export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, dat
 
 			bucket.times++;
 			if (bucket.times > data.ratelimit.times) {
+				console.log(`ratelimit exceeded for route ${route}, ip ${ip}`);
 				throw new APIError({ msg: "Too many requests", status: 429, type: "badRequest" });
 			}
 		}
@@ -123,25 +125,55 @@ export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, dat
 			return streamText(c, async api => {
 				const disp = new DisposableStack();
 				try {
+					const abort = new AbortController();
+					api.onAbort(() => abort.abort());
+					disp.defer(() => abort.abort());
+
 					const out =
 						await (data.handler as unknown as (
 							this: DisposableStack,
-							api: StreamingApi,
+							abort: AbortSignal,
 							c: Context,
 							request: typeof req,
 						) => Promise<AsyncIterable<(ServerResponse<K> & { type: "ok" })["data"]>>).call(
 							disp,
-							api,
+							abort.signal,
 							c,
 							req,
 						);
-					for await (const x of out) {
-						await api.writeln(stringifyExtra({ type: "ok", data: x } satisfies ServerResponse<K>));
-					}
+
+					const push = new EventEmitter<void>();
+					let queue: string[] = [];
+					const processOut = (async () => {
+						for await (const v of out) {
+							queue.push(stringifyExtra({ type: "ok", data: v } satisfies ServerResponse<K>));
+							push.emit();
+						}
+					})();
+					const triggerHeartbeat = (async () => {
+						while (!abort.signal.aborted) {
+							await delay(feedHeartbeat);
+							queue.push("");
+							push.emit();
+						}
+					})();
+					const writeLines = (async () => {
+						while (!abort.signal.aborted) {
+							await push.wait(abort.signal);
+							const tmp = queue;
+							queue = [];
+							for (const x of tmp) {
+								await api.writeln(x);
+							}
+						}
+					})();
+
+					await Promise.race([processOut, triggerHeartbeat, writeLines]);
 				} catch (e) {
 					console.error("feed error", e);
 					await api.writeln(stringifyExtra(errToJson(e)));
 				}
+
 				disp.dispose();
 				await api.close();
 			});
@@ -193,8 +225,8 @@ export async function matchKey(key: string, password: string) {
 }
 
 const apiKeys = {
-	admin: env.ADMIN_API_KEY != undefined ? await getKey(env.ADMIN_API_KEY) : null,
-	client: env.CLIENT_API_KEY != undefined ? await getKey(env.CLIENT_API_KEY) : null,
+	admin: new TextEncoder().encode(env.ADMIN_API_KEY),
+	client: new TextEncoder().encode(env.CLIENT_API_KEY),
 };
 
 export async function keyAuth(c: Context, admin: boolean) {
@@ -202,8 +234,14 @@ export async function keyAuth(c: Context, admin: boolean) {
 	if (authHdr == undefined) throw err("No auth header", "auth");
 	const bearerMatch = authHdr.match(/^Bearer (.+)$/);
 	if (bearerMatch == null) throw err("Invalid auth header", "auth");
-	const auth = (apiKeys.admin != null && await matchKey(apiKeys.admin, bearerMatch[1]))
-		|| (apiKeys.client != null && await matchKey(apiKeys.client, bearerMatch[1]) && admin != true);
+
+	const bytes = new TextEncoder().encode(bearerMatch[1]);
+	const auth =
+		(env.ADMIN_API_KEY != null && apiKeys.admin.byteLength == bytes.byteLength
+			&& timingSafeEqual(apiKeys.admin, bytes))
+		|| (apiKeys.client != null && apiKeys.client.byteLength == bytes.byteLength
+			&& timingSafeEqual(apiKeys.client, bytes) && admin != true);
+
 	if (!auth) throw err("Incorrect API key", "auth");
 }
 
@@ -216,7 +254,8 @@ export async function auth(c: Context): Promise<number> {
 	const ses = await transaction(trx => getDb(trx, "session", id));
 	if (ses == undefined) throw err("no session found", "auth");
 	if (Date.now() >= ses.created+sessionExpireMs) throw err("session expired", "auth");
-	if (!timingSafeEqual(ses.key, Buffer.from(match[2], "hex"))) {
+	const buf = Buffer.from(match[2], "hex");
+	if (buf.byteLength != ses.key.byteLength || !timingSafeEqual(ses.key, buf)) {
 		throw err("invalid session key", "auth");
 	}
 	return ses.user;
@@ -228,7 +267,9 @@ export const openai = new OpenAI();
 export const rootUrl = new URL(env.ROOT_URL);
 
 const app = new Hono<HonoEnv>();
-app.use("*", serveStatic({ root: "../client/dist" }));
+const distDir = "../client/dist";
+app.get("*", serveStatic({ root: distDir }));
+app.get("*", serveStatic({ path: join(distDir, "index.html") }));
 
 app.onError((err, c) => {
 	console.error("request error", err);
@@ -236,7 +277,9 @@ app.onError((err, c) => {
 	return c.json(json, json.error.status as ContentfulStatusCode);
 });
 
-await makeRoutes(app);
+const api = new Hono<HonoEnv>();
+await makeRoutes(api);
+app.route("/api", api);
 
 console.log("starting server");
 serve({ fetch: app.fetch, port: 8090 });

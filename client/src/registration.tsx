@@ -68,17 +68,11 @@ function GenerateTeamLogo({ refresh, disabled }: { refresh: () => void; disabled
 
 function ShirtPreview(
 	{ info, setSeed, setHue }: {
-		info: Pick<API["getInfo"]["response"] & { type: "ok" }, "info" | "team">;
+		info: Pick<API["getInfo"]["response"] & { type: "ok" }, "info" | "team" | "organizer">;
 		setSeed: (x: number) => void;
 		setHue: (x: number) => void;
 	},
 ) {
-	const name = info.info.name,
-		team = info.team?.name,
-		teamLogo = info.team?.logo,
-		seed = info.info.shirtSeed,
-		hue = info.info.shirtHue;
-
 	const [res, setRes] = useState<GenShirtResponse | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -90,12 +84,15 @@ function ShirtPreview(
 		db.call(() => {
 			worker.postMessage(
 				{
-					name: name ?? "",
-					team: team ?? "",
+					name: info.info.name ?? "",
+					team: info.team?.name ?? "",
 					quality: "low",
-					hue,
-					logo: teamLogo != undefined ? new URL(teamLogo, apiBaseUrl).href : undefined,
-					seed,
+					hue: info.info.shirtHue,
+					organizer: info.organizer,
+					logo: info.team?.logo != undefined
+						? new URL(info.team?.logo, apiBaseUrl).href
+						: undefined,
+					seed: info.info.shirtSeed,
 				} satisfies GenShirtMessage,
 			);
 		});
@@ -115,9 +112,17 @@ function ShirtPreview(
 		};
 
 		return () => worker.terminate();
-	}, [db, hue, name, seed, team, teamLogo]);
+	}, [
+		db,
+		info.info.name,
+		info.info.shirtHue,
+		info.info.shirtSeed,
+		info.organizer,
+		info.team?.logo,
+		info.team?.name,
+	]);
 
-	const validSeed = useValidity(seed.toString(), a => setSeed(parseInt(a, 10)));
+	const validSeed = useValidity(info.info.shirtSeed.toString(), a => setSeed(parseInt(a, 10)));
 
 	return <div className="flex flex-col gap-1 w-full">
 		<Text v="md">Shirt preview</Text>
@@ -135,8 +140,8 @@ function ShirtPreview(
 
 		<div className="flex flex-row gap-2 w-full mt-1 gap-y-1 flex-wrap">
 			<Text>Hue</Text>
-			<input value={hue} onInput={ev => setHue(ev.currentTarget.valueAsNumber)} type="range" min={0}
-				max={360} className="grow" />
+			<input value={info.info.shirtHue} onInput={ev => setHue(ev.currentTarget.valueAsNumber)}
+				type="range" min={0} max={360} className="grow" />
 		</div>
 
 		<Collapse className="self-center">
@@ -362,12 +367,6 @@ export default function RegistrationEditor() {
 								"flex flex-col gap-3 pl-3 items-stretch border-l py-1",
 								borderColor.divider,
 							)}>
-							<Checkbox checked={userInfo.inPerson.needTransportation} valueChange={v =>
-								modInPerson("needTransportation", v)}
-								label={"Do you require transportation (teams within driving distance only)?"} />
-							{userInfo.inPerson.needTransportation
-								&& <Text>We'll reach out to you to help arrange transportation.</Text>}
-
 							<div className="flex flex-col gap-1">
 								<Text v="bold">Resume</Text>
 								<Text>Our sponsors are excited to learn about you!</Text>
@@ -405,7 +404,7 @@ export default function RegistrationEditor() {
 							</div>
 
 							<div className="flex flex-col gap-1">
-								<Text v="bold">Panera sandwich</Text>
+								<Text v="bold">Chick-fil-a sandwich</Text>
 								<Select
 									options={[
 										{ label: "Unset", value: "unset" },
@@ -444,9 +443,10 @@ export default function RegistrationEditor() {
 							</div>
 
 							{userInfo.inPerson.shirtSize != "none"
-								&& <ShirtPreview info={{ info: userInfo, team }} setSeed={s => {
-									modInfo("shirtSeed", s);
-								}} setHue={h => {
+								&& <ShirtPreview info={{ info: userInfo, team, organizer: data?.organizer == true }}
+									setSeed={s => {
+										modInfo("shirtSeed", s);
+									}} setHue={h => {
 									modInfo("shirtHue", h);
 								}} />}
 						</div>)}
@@ -522,7 +522,7 @@ export default function RegistrationEditor() {
 
 				{team == null && data.submitted
 					&& <Alert bad title="You must be in a team to participate."
-						txt="Please create or join a team. If you want to go solo, make a 1-person team." />}
+						txt="Please create or join a team. If you want to go solo, make a 1-person team, though this is highly discouraged!" />}
 			</>}
 
 			<Modal open={createTeamOpen} onClose={() => setCreateTeamOpen(false)} title="Create team">
@@ -576,12 +576,14 @@ export default function RegistrationEditor() {
 
 					<div className="flex flex-col gap-1">
 						<Text>Team name</Text>
-						<Input disabled={loading} readonly={registrationClosed} required {...teamNameValidity}
-							pattern={validNameRe} onBlur={ev => {
-							if (registrationClosed) return;
-							teamNameValidity.onBlur(ev);
-							if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
-						}} />
+						{data.organizer
+							? <Input readOnly value="Organizer" />
+							: <Input disabled={loading} readonly={registrationClosed} required
+								{...teamNameValidity} pattern={validNameRe} onBlur={ev => {
+								if (registrationClosed) return;
+								teamNameValidity.onBlur(ev);
+								if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
+							}} />}
 					</div>
 
 					{team.logo == null
@@ -625,7 +627,7 @@ export default function RegistrationEditor() {
 						}} className="h-auto" />
 					</div>
 
-					<div className="flex flex-col gap-0.5">
+					<div className="flex flex-col gap-1">
 						<Text v="bold">Members</Text>
 						<Text v="smbold" className="mb-1">{team.members.length}/{teamLimit} members</Text>
 						{team.members.map(v =>

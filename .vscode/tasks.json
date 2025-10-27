@@ -12,6 +12,16 @@
 			"type": "shell",
 			"command": "zsh ./deploy-daemon.sh",
 			"problemMatcher": []
+		},
+		{
+			"label": "client",
+			"type": "shell",
+			"command": "pnpm run dev",
+			"isBackground": true,
+			"options": {
+				"cwd": "${workspaceFolder}/client"
+			},
+			"problemMatcher": []
 		}
 	]
 }

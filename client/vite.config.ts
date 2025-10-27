@@ -7,13 +7,5 @@ export default defineConfig(x => ({
 	plugins: [preact({ devToolsEnabled: x.mode == "development" }), tailwindcss()],
 	server: x.mode != "development"
 		? {}
-		: {
-			proxy: {
-				"/api": {
-					target: devEnv["VITE_API_BASE_URL"],
-					changeOrigin: true,
-					rewrite: path => path.replace(/^\/api/, ""),
-				},
-			},
-		},
+		: { proxy: { "/api": { target: devEnv["VITE_API_BASE_URL"], changeOrigin: true } } },
 }));
