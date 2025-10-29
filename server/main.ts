@@ -9,10 +9,8 @@ import { Buffer } from "node:buffer";
 import { argon2, randomBytes, timingSafeEqual } from "node:crypto";
 import { OpenAI } from "openai";
 import z from "zod";
-import {
-	API, APIError, delay, feedHeartbeat, parseExtra, ServerResponse, Session,
-	stringifyExtra
-} from "../shared/util.ts";
+import { API, APIError, delay, feedHeartbeat, parseExtra, ServerResponse, Session,
+	stringifyExtra } from "../shared/util.ts";
 import { EventEmitter, getDb, transaction } from "./db.ts";
 import "./routes.ts";
 import { join } from "node:path";
@@ -267,9 +265,6 @@ export const openai = new OpenAI();
 export const rootUrl = new URL(env.ROOT_URL);
 
 const app = new Hono<HonoEnv>();
-const distDir = "../client/dist";
-app.get("*", serveStatic({ root: distDir }));
-app.get("*", serveStatic({ path: join(distDir, "index.html") }));
 
 app.onError((err, c) => {
 	console.error("request error", err);
@@ -280,6 +275,10 @@ app.onError((err, c) => {
 const api = new Hono<HonoEnv>();
 await makeRoutes(api);
 app.route("/api", api);
+
+const distDir = "../client/dist";
+app.get("*", serveStatic({ root: distDir }));
+app.get("*", serveStatic({ path: join(distDir, "index.html") }));
 
 console.log("starting server");
 serve({ fetch: app.fetch, port: 8090 });

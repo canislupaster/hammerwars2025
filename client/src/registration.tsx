@@ -358,7 +358,7 @@ export default function RegistrationEditor() {
 					<Divider />
 
 					<Checkbox checked={userInfo.inPerson != null} valueChange={v => {
-						modInfo("inPerson", v ? (userInfo.inPerson ?? { needTransportation: false }) : null);
+						modInfo("inPerson", v ? (userInfo.inPerson ?? {}) : null);
 					}} label="Will you be attending in person?" />
 
 					{userInfo.inPerson != null
@@ -404,17 +404,15 @@ export default function RegistrationEditor() {
 							</div>
 
 							<div className="flex flex-col gap-1">
-								<Text v="bold">Chick-fil-a sandwich</Text>
+								<Text v="bold">Subway's sandwich</Text>
 								<Select
 									options={[
 										{ label: "Unset", value: "unset" },
 										{ label: "I don't want lunch", value: "none" },
-										{ label: "Chicken Sandwich", value: "chickenSandwich" },
-										{ label: "Spicy Chicken Sandwich", value: "spicyChickenSandwich" },
-										{
-											label: "Southwest Veggie Wrap (vegetarian, contains cheese)",
-											value: "veggieWrap",
-										},
+										{ label: "Turkey", value: "turkey" },
+										{ label: "Tuna", value: "tuna" },
+										{ label: "Ham", value: "ham" },
+										{ label: "Veggie", value: "veggie" },
 									] as const}
 									value={userInfo.inPerson?.lunch ?? "unset" as const}
 									setValue={v => modInPerson("lunch", v == "unset" ? undefined : v)} />
@@ -455,11 +453,11 @@ export default function RegistrationEditor() {
 						<Text v="big" className="mt-4">Rules</Text>
 
 						<p>
-							The open contest will follow Codeforces rules (see{" "}
+							The open contest will roughly follow Codeforces rules (see{" "}
 							<Anchor href="https://codeforces.com/blog/entry/4088">here</Anchor> and{" "}
 							<Anchor href="https://codeforces.com/blog/entry/133941">here</Anchor>): you and your
 							team cannot use any ideas, code, conversations, or other resources created after the
-							start of the contest except by your team.
+							start of the contest except by your team. There's no one-computer restriction.
 						</p>
 						<p>
 							During the contest, you are not allowed to communicate about the problems with anyone

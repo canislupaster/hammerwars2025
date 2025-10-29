@@ -108,7 +108,7 @@ export const resumeMaxSize = 1024*1024*5;
 export const maxPromptLength = 1024*4;
 export const screenshotMaxWidth = 1920;
 export const teamLimit = 3;
-export const timePlace = "November 15, 2025 in the Lawson Computer Science Building";
+export const timePlace = "November 16, 2025 in the Lawson Computer Science Building";
 
 export const shirtSizes = ["xs", "s", "m", "l", "xl", "2xl", "3xl", "4xl", "5xl"] as const;
 
@@ -120,9 +120,8 @@ export type UserInfo = {
 	shirtSeed: number;
 	shirtHue: number;
 	inPerson: {
-		needTransportation: boolean;
 		dinner: "cheese" | "pepperoni" | "sausage" | "none";
-		lunch: "chickenSandwich" | "spicyChickenSandwich" | "veggieWrap" | "none";
+		lunch: "ham" | "turkey" | "tuna" | "veggie" | "none";
 		shirtSize: (typeof shirtSizes[number]) | "none";
 	} | null;
 };
@@ -151,7 +150,7 @@ export type ContestProperties = {
 
 export type Session = { id: number; key: string };
 export type PartialUserInfo = Partial<Omit<UserInfo, "inPerson">> & {
-	inPerson: (Partial<UserInfo["inPerson"]> & { needTransportation: boolean }) | null;
+	inPerson: Partial<UserInfo["inPerson"]> | null;
 	shirtSeed: number;
 	shirtHue: number;
 	discord: string | null;
@@ -218,6 +217,14 @@ export type AdminTeamData = {
 	logoId: number | null;
 };
 
+export type AdminUserData = {
+	id: number;
+	email: string;
+	data: UserInfo | null;
+	team: number | null;
+	resumeId: number | null;
+};
+
 export type DOMJudgeActiveContest = { cid: string; name?: string } | null;
 
 export type API = {
@@ -263,18 +270,8 @@ export type API = {
 	announce: { request: { teams: number[] | "allTeams"; title: string; body: string } };
 	getResumeId: { request: { id: number }; response: { base64: string } };
 	getTeamLogo: { request: { id: number }; response: { base64: string; mime: string } };
-	allData: {
-		response: {
-			users: {
-				id: number;
-				email: string;
-				data: UserInfo | null;
-				team: number | null;
-				resumeId: number | null;
-			}[];
-			teams: AdminTeamData[];
-		};
-	};
+	allData: { response: { users: AdminUserData[]; teams: AdminTeamData[] } };
+	setUsers: { request: (Omit<AdminUserData, "resumeId"> | { id: number; delete: true })[] };
 	setTeams: { request: (Omit<AdminTeamData, "logoId"> | { id: number; delete: true })[] };
 	teamInfo: { request: { id: number }; response: AdminTeamData };
 	teamFeed: {

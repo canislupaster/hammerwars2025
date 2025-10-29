@@ -31,7 +31,7 @@ for (const k of localStorageKeys) {
 	});
 }
 
-export const apiBaseUrl = new URL("/api/", import.meta.env["VITE_ROOT_URL"] as string).href;
+export const apiBaseUrl = new URL("/api/", location.href).href;
 console.log(`api base url: ${apiBaseUrl}`);
 
 export const apiClient = new APIClient(apiBaseUrl, {

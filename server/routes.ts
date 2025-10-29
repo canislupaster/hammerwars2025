@@ -20,10 +20,9 @@ import { auth, Context, env, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, m
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
 const inPersonSchema = z.object({
-	needTransportation: z.boolean(),
 	dinner: z.enum(["cheese", "pepperoni", "sausage", "none"]),
-	lunch: z.enum(["chickenSandwich", "spicyChickenSandwich", "veggieWrap", "none"]),
-	shirtSize: z.enum(shirtSizes),
+	lunch: z.enum(["ham", "turkey", "tuna", "veggie", "none"]),
+	shirtSize: z.enum([...shirtSizes, "none"]),
 });
 const discordSchema = z.string().regex(new RegExp(validDiscordRe));
 const userInfoSchema = z.object({
@@ -36,7 +35,7 @@ const userInfoSchema = z.object({
 const partialUserInfoSchema = z.object({
 	name: nameSchema.optional(),
 	discord: discordSchema.nullable(),
-	inPerson: inPersonSchema.partial().and(z.object({ needTransportation: z.boolean() })).nullable(),
+	inPerson: inPersonSchema.partial().nullable(),
 	shirtSeed: z.int32(),
 	shirtHue: z.number().min(0).max(360),
 	agreeRules: z.boolean(),
@@ -573,6 +572,44 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					out.teams.push(await toAdminTeam(trx, team.id));
 				}
 				return out;
+			});
+		},
+	});
+
+	makeRoute(app, "setUsers", {
+		validator: z.array(
+			z.object({
+				id: z.number(),
+				email: z.email(),
+				team: z.int().nullable(),
+				data: userInfoSchema.nullable(),
+			}).or(z.object({ id: z.number(), delete: z.literal(true) })),
+		),
+		async handler(c, req) {
+			await keyAuth(c, true);
+			await transaction(async trx => {
+				for (const user of req) {
+					const old = await getDbCheck(trx, "user", user.id);
+
+					if ("delete" in user) {
+						await setDb(trx, "team", user.id, null);
+					} else {
+						await setDb(trx, "user", user.id, {
+							email: user.email,
+							data: {
+								...old.data,
+								lastEdited: Date.now(),
+								submitted: user.data,
+								info: user.data != null ? { ...user.data, agreeRules: true } : old.data.info,
+							},
+							team: user.team,
+						});
+
+						if (user.team != null) teamChanged.emit(user.team);
+					}
+
+					if (old.team != null) teamChanged.emit(old.team);
+				}
 			});
 		},
 	});

@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { Queue } from "../shared/queue";
 import { ContestProperties, delay, DOMJudgeActiveContest, getTeamLogoURL, handleNDJSONResponse,
 	Scoreboard, ScoreboardLastSubmission, ScoreboardTeam, throttle } from "../shared/util";
-import { getDbCheck, getProperty, Mutable, propertiesChanged, transaction } from "./db";
+import { getDb, getProperty, Mutable, propertiesChanged, transaction } from "./db";
 import { Account, BaseNotification, Judgement, Notification, Problem, Submission,
 	Team } from "./domjudge_types";
 import { env } from "./main";
@@ -274,22 +274,25 @@ export class DOMJudge extends DisposableStack {
 					team.id,
 				).executeTakeFirst();
 				if (data == undefined) return null;
-				this.#data.domJudgeIdToId.set(team.id, data.id);
 
 				const logoId = await trx.selectFrom("teamLogo").select("id").where("team", "=", data.id)
 					.executeTakeFirst();
 
 				const members = await trx.selectFrom("user").select("id").where("team", "=", data.id)
 					.execute();
+				const mems = (await Promise.all(members.map(async mem => {
+					return (await getDb(trx, "user", mem.id));
+				}))).filter(x => x != null);
 
+				if (mems.some(v => v.data.info.inPerson == null)) return null;
+
+				this.#data.domJudgeIdToId.set(team.id, data.id);
 				return [data.id, {
 					rank: 0,
 					solves: 0,
 					penaltyMinutes: 0,
 					problems: new Map(),
-					members: (await Promise.all(members.map(async mem => {
-						return (await getDbCheck(trx, "user", mem.id)).data.submitted?.name;
-					}))).filter(x => x != null),
+					members: mems.map(v => v.data.info.name).filter(x => x != null),
 					name: data.name,
 					logo: logoId != null ? getTeamLogoURL(logoId.id) : null,
 				}] as const;

@@ -50,7 +50,7 @@ const scheduleItems: ScheduleItem[] = [
 		note:
 			"You'll have an hour to solve practice problems and setup your workstation for the real thing.",
 	},
-	{ time: "12:40 PM - 1:25 PM", title: "Lunch", note: "Chick-fil-a sandwich of your choice." },
+	{ time: "12:40 PM - 1:25 PM", title: "Lunch", note: "Subway sandwich of your choice." },
 	{
 		time: "1:30 PM - 6:30 PM",
 		title: "Main contest",
@@ -257,7 +257,9 @@ export function PatternBg(
 			const yOff = (ny*sz-el.clientHeight)/2;
 			const layout = (t: number) => {
 				const sec = t/1000;
-				const dt = sec > last+.5 ? 0 : sec-last;
+				const dt = sec-last;
+				if (dt > .5) return reset();
+
 				const flippedFrom: PatternArgs["flippedFrom"] = fill(ny, () => fill(nx, () => null));
 				patInst.current!.update({ dt, sec, ny, nx, flipped, flippedFrom });
 				for (let j = 0; j < ny; j++) {
