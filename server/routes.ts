@@ -1,4 +1,3 @@
-import { SendEmailCommand } from "@aws-sdk/client-ses";
 import { Hono } from "hono";
 import { Buffer } from "node:buffer";
 import { randomInt, timingSafeEqual } from "node:crypto";
@@ -11,11 +10,12 @@ import { API, ContestProperties, DOMJudgeActiveContest, fill, getTeamLogoURL, lo
 	maxPromptLength, resumeMaxSize, screenshotMaxWidth, shirtSizes, TeamContestProperties, teamLimit,
 	UserInfo, validDiscordRe, validNameRe } from "../shared/util.ts";
 import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getProperty,
-	propertiesChanged, setDb, setProperty, transaction, updateDb, UserData } from "./db.ts";
+	propertiesChanged, PropertyChangeParam, setDb, setProperty, transaction, updateDb,
+	UserData } from "./db.ts";
 import { domJudge } from "./domjudge.ts";
 import { makeVerificationEmail } from "./email.ts";
 import { auth, Context, env, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai,
-	rootUrl, sesClient } from "./main.ts";
+	rootUrl } from "./main.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
@@ -49,21 +49,21 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		ratelimit: { durationMs: 3600*1000*24, times: 5 },
 		handler: async (_c, req) => {
 			const verifyKey = genKey();
-			const newId = await transaction(async trx => {
+			return await transaction(async trx => {
 				const exists = await trx.selectFrom("emailVerification").selectAll().where(
 					"email",
 					"=",
 					req.email,
 				).executeTakeFirst();
-				if (exists) return null;
 
-				return (await trx.insertInto("emailVerification").returning("id").values({
-					email: req.email,
-					key: verifyKey,
-				}).executeTakeFirstOrThrow()).id;
-			});
+				if (exists) return "alreadySent";
 
-			if (newId != null) {
+				const newId =
+					(await trx.insertInto("emailVerification").returning("id").values({
+						email: req.email,
+						key: verifyKey,
+					}).executeTakeFirstOrThrow()).id;
+
 				const url = new URL("/verify", rootUrl);
 				url.searchParams.append("id", newId.toString());
 				url.searchParams.append("key", verifyKey.toString("hex"));
@@ -71,25 +71,38 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				if (env["NOSEND_EMAIL"] == "1") {
 					console.log(`${req.email} verification link: ${url.href}`);
 				} else {
-					const response = await sesClient.send(
-						new SendEmailCommand({
-							Destination: { ToAddresses: [req.email], CcAddresses: [], BccAddresses: [] },
-							Source: "noreply@email.purduecpu.com",
-							Message: {
-								Subject: {
-									Charset: "UTF-8",
-									Data: "HammerWars 2025: Finish setting up your account",
-								},
-								Body: { Html: { Charset: "UTF-8", Data: makeVerificationEmail(url.href) } },
+					const resp = await fetch("https://send.api.mailtrap.io/api/send", {
+						method: "POST",
+						body: JSON.stringify({
+							from: {
+								email: "noreply@purduecpu.com",
+								name: "Purdue Competitive Programmers Union",
 							},
+							to: [{ email: req.email }],
+							subject: "HammerWars 2025: Finish setting up your account",
+							html: makeVerificationEmail(url.href),
 						}),
-					);
+						headers: {
+							"content-type": "application/json",
+							authorization: `Bearer ${env.MAILTRAP_KEY}`,
+						},
+					});
 
-					console.log(`sent to ${req.email} (id ${response.MessageId})`);
+					const respData = await resp.json().catch(() => ({})) as {
+						success?: boolean;
+						message_ids?: string[];
+					};
+
+					if (!resp.ok || respData.success != true || respData.message_ids?.length != 1) {
+						console.error(`mailtrap to ${req.email}: ${resp.status} ${resp.statusText}`, respData);
+						throw err("Failed to send email.");
+					}
+
+					console.log(`sent to ${req.email} (id ${respData.message_ids[0]})`);
 				}
-			}
 
-			return newId == null ? "alreadySent" : "sent";
+				return "sent";
+			});
 		},
 	});
 
@@ -98,7 +111,9 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		handler: async (_c, req) => {
 			return await transaction(async trx => {
 				const verify = await getDb(trx, "emailVerification", req.id);
-				return verify != null && timingSafeEqual(verify.key, Buffer.from(req.key, "hex"));
+				const key = Buffer.from(req.key, "hex");
+				return verify != null && verify.key.byteLength == key.byteLength
+					&& timingSafeEqual(verify.key, key);
 			});
 		},
 	});
@@ -122,9 +137,9 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		validator: z.object({ id: z.number(), key: z.hex(), password: passwordSchema }),
 		handler: async (c, req) => {
 			return await transaction(async trx => {
-				const row = await trx.selectFrom("emailVerification").selectAll().where("id", "==", req.id)
-					.executeTakeFirst();
-				if (row == null || !timingSafeEqual(row.key, Buffer.from(req.key, "hex"))) {
+				const row = await getDbCheck(trx, "emailVerification", req.id);
+				const key = Buffer.from(req.key, "hex");
+				if (row == null || key.byteLength != row.key.byteLength || !timingSafeEqual(row.key, key)) {
 					throw err("Invalid verification key");
 				}
 
@@ -482,11 +497,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			await transaction(async trx => {
 				// zod strips unknown keys
 				for (const k in req) {
-					const contestKey = k as keyof ContestProperties;
-					// null !== undefined
-					if (req[contestKey] !== undefined) {
-						await setProperty(trx, contestKey, req[contestKey]);
-					}
+					await setProperty(trx, ...[k, req[k as keyof ContestProperties]] as PropertyChangeParam);
 				}
 			});
 		},
@@ -774,7 +785,9 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			};
 
 			this.use(propertiesChanged.on(c => {
-				emitter.emit({ type: "props", props: c.team ?? defaultTeamProps });
+				if (c.k == "team") {
+					emitter.emit({ type: "props", props: c.v ?? defaultTeamProps });
+				}
 			}));
 
 			const queue: (typeof emitter extends EventEmitter<infer T> ? T : never)[] = [];
