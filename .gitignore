@@ -26,7 +26,8 @@ dist-ssr
 *.tsbuildinfo
 
 .env
+.env.production.local
+.env.daemon.local
 server/screenshots
 scripts/list.txt
 db.sqlite
-scripts/manage.ts

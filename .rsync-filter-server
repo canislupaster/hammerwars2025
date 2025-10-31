@@ -1,0 +1,12 @@
+- /server/db.sqlite
+- /server/screenshots
+- node_modules/
++ /server
++ /shared
++ /client
++ /client/dist/***
++ /server/*.ts
++ /shared/*.ts
++ package.json
++ /pnpm-lock.yaml
++ /pnpm-workspace.yaml

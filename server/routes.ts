@@ -1,3 +1,4 @@
+import { SendEmailCommand } from "@aws-sdk/client-ses";
 import { Hono } from "hono";
 import { Buffer } from "node:buffer";
 import { randomInt, timingSafeEqual } from "node:crypto";
@@ -15,7 +16,7 @@ import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getPrope
 import { domJudge } from "./domjudge.ts";
 import { makeVerificationEmail } from "./email.ts";
 import { auth, Context, env, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai,
-	rootUrl } from "./main.ts";
+	rootUrl, sesClient } from "./main.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
@@ -49,21 +50,21 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		ratelimit: { durationMs: 3600*1000*24, times: 5 },
 		handler: async (_c, req) => {
 			const verifyKey = genKey();
-			return await transaction(async trx => {
+			const newId = await transaction(async trx => {
 				const exists = await trx.selectFrom("emailVerification").selectAll().where(
 					"email",
 					"=",
 					req.email,
 				).executeTakeFirst();
+				if (exists) return null;
 
-				if (exists) return "alreadySent";
+				return (await trx.insertInto("emailVerification").returning("id").values({
+					email: req.email,
+					key: verifyKey,
+				}).executeTakeFirstOrThrow()).id;
+			});
 
-				const newId =
-					(await trx.insertInto("emailVerification").returning("id").values({
-						email: req.email,
-						key: verifyKey,
-					}).executeTakeFirstOrThrow()).id;
-
+			if (newId != null) {
 				const url = new URL("/verify", rootUrl);
 				url.searchParams.append("id", newId.toString());
 				url.searchParams.append("key", verifyKey.toString("hex"));
@@ -71,38 +72,25 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				if (env["NOSEND_EMAIL"] == "1") {
 					console.log(`${req.email} verification link: ${url.href}`);
 				} else {
-					const resp = await fetch("https://send.api.mailtrap.io/api/send", {
-						method: "POST",
-						body: JSON.stringify({
-							from: {
-								email: "noreply@purduecpu.com",
-								name: "Purdue Competitive Programmers Union",
+					const response = await sesClient.send(
+						new SendEmailCommand({
+							Destination: { ToAddresses: [req.email], CcAddresses: [], BccAddresses: [] },
+							Source: "noreply@email.purduecpu.com",
+							Message: {
+								Subject: {
+									Charset: "UTF-8",
+									Data: "HammerWars 2025: Finish setting up your account",
+								},
+								Body: { Html: { Charset: "UTF-8", Data: makeVerificationEmail(url.href) } },
 							},
-							to: [{ email: req.email }],
-							subject: "HammerWars 2025: Finish setting up your account",
-							html: makeVerificationEmail(url.href),
 						}),
-						headers: {
-							"content-type": "application/json",
-							authorization: `Bearer ${env.MAILTRAP_KEY}`,
-						},
-					});
+					);
 
-					const respData = await resp.json().catch(() => ({})) as {
-						success?: boolean;
-						message_ids?: string[];
-					};
-
-					if (!resp.ok || respData.success != true || respData.message_ids?.length != 1) {
-						console.error(`mailtrap to ${req.email}: ${resp.status} ${resp.statusText}`, respData);
-						throw err("Failed to send email.");
-					}
-
-					console.log(`sent to ${req.email} (id ${respData.message_ids[0]})`);
+					console.log(`sent to ${req.email} (id ${response.MessageId})`);
 				}
+			}
 
-				return "sent";
-			});
+			return newId == null ? "alreadySent" : "sent";
 		},
 	});
 

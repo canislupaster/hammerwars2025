@@ -132,6 +132,16 @@ export type TeamContestProperties = {
 	visibleDirectories: string[];
 };
 
+export type PresentationState = { type: "none" } | { type: "countdown"; to: number } | {
+	type: "submissions";
+	teams: Scoreboard["teams"];
+	problems: {
+		label: string;
+		solutions: { title: string; summary: string; language: string; source: string; team: number }[];
+	}[];
+	teamVerdicts: { team: number; verdictCounts: ReadonlyMap<string, number> };
+};
+
 export type ContestProperties = {
 	registrationEnds: number | null;
 	registrationOpen: boolean;
@@ -146,6 +156,11 @@ export type ContestProperties = {
 	focusTeamId: number | null;
 	team: TeamContestProperties;
 	organizerTeamId: number | null;
+	presentation: { type: "submission"; problems: { label: string; intendedSolution: string }[] } | {
+		type: "duel";
+		cfContestId: number;
+		layout: "left" | "both" | "right" | "score";
+	} | null;
 };
 
 export type Session = { id: number; key: string };
@@ -292,6 +307,7 @@ export type API = {
 		response: { id: number; title: string; body: string; time: number } | null;
 	};
 	scoreboard: { feed: true; response: Scoreboard };
+	presentation: { feed: true; response: PresentationState };
 	screenshot: { request: { team: number; data: string; mac: string } };
 };
 

@@ -42,6 +42,13 @@ export const apiClient = new APIClient(apiBaseUrl, {
 	},
 });
 
+export const apiKeyClient = new APIClient(apiBaseUrl, {
+	get apiKey() {
+		return LocalStorage.apiKey ?? null;
+	},
+	session: null,
+});
+
 type CurrentRequest<T extends keyof API, Throw extends boolean> = {
 	current: Throw extends true ? (ServerResponse<T> & { type: "ok" }) : ServerResponse<T>;
 	request: API[T] extends { request: unknown } ? API[T]["request"] : null;

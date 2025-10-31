@@ -20,7 +20,9 @@ import { makeRoutes } from "./routes.ts";
 export const env = z.parse(
 	z.object({
 		NOSEND_EMAIL: z.literal("1").optional(),
-		MAILTRAP_KEY: z.string(),
+		AWS_REGION: z.string(),
+		AWS_ACCESS_KEY_ID: z.string(),
+		AWS_SECRET_ACCESS_KEY: z.string(),
 		ROOT_URL: z.url(),
 		TRUSTED_PROXY: z.string().optional(),
 		ADMIN_API_KEY: z.string(),
@@ -257,6 +259,7 @@ export async function auth(c: Context): Promise<number> {
 	return ses.user;
 }
 
+export const sesClient = new SESClient({ region: env.AWS_REGION });
 export const openai = new OpenAI();
 
 export const rootUrl = new URL(env.ROOT_URL);

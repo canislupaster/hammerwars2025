@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { Queue } from "../shared/queue";
 import { ContestProperties, delay, DOMJudgeActiveContest, getTeamLogoURL, handleNDJSONResponse,
 	Scoreboard, ScoreboardLastSubmission, ScoreboardTeam, throttle } from "../shared/util";
-import { getDb, getProperty, Mutable, propertiesChanged, transaction } from "./db";
+import { EventEmitter, getDb, getProperty, Mutable, propertiesChanged, transaction } from "./db";
 import { Account, BaseNotification, Judgement, Notification, Problem, Submission,
 	Team } from "./domjudge_types";
 import { env } from "./main";
@@ -87,12 +87,35 @@ export class DOMJudge extends DisposableStack {
 	activeContest = new Mutable<DOMJudgeActiveContest>(null);
 	scoreboard = new Mutable<Scoreboard>(defaultScoreboard);
 
+	#relevantProperties = new Set<keyof ContestProperties>([
+		"domJudgeCid",
+		"resolveIndex",
+		"focusTeamId",
+	]);
+	#relevantPropertiesChanged = new EventEmitter<void>();
 	#throttle: ReturnType<typeof throttle>;
 	#data = makeDomJudgeData();
 
 	constructor() {
 		super();
 		this.#throttle = this.use(throttle(500));
+		propertiesChanged.on(x => {
+			if (this.#relevantProperties.has(x.k)) this.#relevantPropertiesChanged.emit();
+		});
+	}
+
+	domJudgeApi(url: string, params: Record<string, string | undefined> = {}, abort?: AbortSignal) {
+		const authHeader = `Basic ${
+			Buffer.from(`${env.DOMJUDGE_API_USER}:${env.DOMJUDGE_API_KEY}`).toString("base64")
+		}`;
+		const u = new URL(url, new URL(`/api/v4/contests/${this.#domJudgeCid}/`, env.DOMJUDGE_URL));
+		for (const [k, v] of Object.entries(params)) {
+			if (v != undefined) u.searchParams.append(k, v);
+		}
+		return fetch(u, {
+			headers: { accept: "application/json", authorization: authHeader },
+			signal: abort,
+		});
 	}
 
 	getTeamUsername(domJudgeId: string) {
@@ -340,29 +363,18 @@ export class DOMJudge extends DisposableStack {
 
 		if (this.#domJudgeCid == null) return;
 
-		const authHeader = `Basic ${
-			Buffer.from(`${env.DOMJUDGE_API_USER}:${env.DOMJUDGE_API_KEY}`).toString("base64")
-		}`;
-		const u = new URL(`/api/v4/contests/${cid}/event-feed?stream=false`, env.DOMJUDGE_URL);
-		u.searchParams.append(
-			"types",
-			["contests", "problems", "state", "accounts", "teams", "submissions", "judgements"].join(","),
-		);
-		if (this.#data.lastUpdate != null) {
-			u.searchParams.append("since_token", this.#data.lastUpdate);
-		}
-
 		let stream: AsyncGenerator<string> | null = null;
 		// skip fetch if we already have updates requested...
 		// uh makes resolver faster
 		if (!shouldUpdateJudgements && !this.#data.doUpdateTeams) {
 			const abort = new AbortController();
-			const listener = propertiesChanged.on(() => abort.abort(new PollAbortError()));
+			const listener = this.#relevantPropertiesChanged.on(() => abort.abort(new PollAbortError()));
 			try {
-				const res = await fetch(u, {
-					headers: { accept: "application/json", authorization: authHeader },
-					signal: abort.signal,
-				});
+				const res = await this.domJudgeApi("event-feed?stream=false", {
+					types: ["contests", "problems", "state", "accounts", "teams", "submissions", "judgements"]
+						.join(","),
+					since_token: this.#data.lastUpdate != null ? this.#data.lastUpdate : undefined,
+				}, abort.signal);
 				if (!res.ok) {
 					throw new Error(`domjudge event feed status ${res.status}: ${res.statusText}`);
 				}
@@ -437,6 +449,41 @@ export class DOMJudge extends DisposableStack {
 		}
 	}
 
+	async getPreFreezeSolutions() {
+		const out: {
+			team: number;
+			problem: string;
+			name: string;
+			source: string;
+			runtime: number | null;
+		}[] = [];
+		const subJudgements = Map.groupBy(this.#data.judgements.values(), j => j.submission_id);
+		const freeze = this.scoreboard.v.freezeTimeMs;
+		for (const v of this.#data.submission.values()) {
+			const team = this.#data.domJudgeIdToId.get(v.team_id);
+			const prob = this.#data.problemInfo.get(v.problem_id);
+			const judgement = subJudgements.get(v.id)?.[0];
+			if (
+				team == null || prob == null || judgement == null || judgement.end_time == null
+				|| (freeze != null && Date.parse(v.time) >= freeze)
+			) continue;
+			const code = await (await this.domJudgeApi(`submissions/${v.id}/source-code`)).json() as {
+				filename: string;
+				source: string;
+			};
+			if (judgement.judgement_type_id == "AC") {
+				out.push({
+					team,
+					problem: prob.label,
+					name: code.filename,
+					source: code.source,
+					runtime: judgement.max_run_time ?? null,
+				});
+			}
+		}
+		return out;
+	}
+
 	start() {
 		let stop = false;
 		this.defer(() => {
@@ -447,7 +494,10 @@ export class DOMJudge extends DisposableStack {
 				const abort = new AbortController();
 				try {
 					await this.#poll();
-					await Promise.race([delay(300, abort.signal), propertiesChanged.wait(abort.signal)]);
+					await Promise.race([
+						delay(300, abort.signal),
+						this.#relevantPropertiesChanged.wait(abort.signal),
+					]);
 				} catch (e) {
 					console.error("domjudge listener error", e);
 					await delay(1000);

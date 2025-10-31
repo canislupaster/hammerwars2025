@@ -1,4 +1,3 @@
-+ /scripts/.env
 + /devdocs/public
 - .git
 :-sr .gitignore

@@ -299,7 +299,13 @@ export class Mutable<T> {
 	}
 }
 
-export const propertiesChanged = new EventEmitter<Partial<ContestProperties>>();
+export type PropertyChange = {
+	[K in keyof ContestProperties]: { k: K; v: ContestProperties[K] };
+}[keyof ContestProperties];
+export type PropertyChangeParam = {
+	[K in keyof ContestProperties]: [prop: K, value: ContestProperties[K]];
+}[keyof ContestProperties];
+export const propertiesChanged = new EventEmitter<PropertyChange>();
 
 export async function getProperties(trx: DBTransaction): Promise<Partial<ContestProperties>> {
 	const out: Partial<ContestProperties> = {};
@@ -310,14 +316,10 @@ export async function getProperties(trx: DBTransaction): Promise<Partial<Contest
 	return out;
 }
 
-export async function setProperty<T extends keyof ContestProperties>(
-	trx: DBTransaction,
-	prop: T,
-	value: ContestProperties[T],
-) {
-	const valueStr = stringifyExtra(value);
-	await trx.insertInto("properties").values({ key: prop, value: valueStr }).onConflict(c =>
+export async function setProperty(trx: DBTransaction, ...vs: PropertyChangeParam) {
+	const valueStr = stringifyExtra(vs[1]);
+	await trx.insertInto("properties").values({ key: vs[0], value: valueStr }).onConflict(c =>
 		c.doUpdateSet({ value: valueStr })
 	).execute();
-	propertiesChanged.emit(await getProperties(trx));
+	propertiesChanged.emit({ k: vs[0], v: vs[1] } as PropertyChange);
 }

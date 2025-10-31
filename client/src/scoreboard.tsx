@@ -3,9 +3,9 @@ import { ComponentChildren } from "preact";
 import { Dispatch, StateUpdater, useCallback, useEffect, useMemo, useRef,
 	useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
-import { APIClient, cmpTeamRankId, ContestProperties, fill, Scoreboard, ScoreboardLastSubmission,
+import { cmpTeamRankId, ContestProperties, fill, Scoreboard, ScoreboardLastSubmission,
 	ScoreboardTeam, throttle } from "../../shared/util";
-import { apiBaseUrl, LocalStorage, useFeed } from "./clientutil";
+import { apiKeyClient, LocalStorage, useFeed } from "./clientutil";
 import { Pattern2, PatternBg } from "./home";
 import { Button, chipColorKeys, chipTextColors, Countdown, Divider, ease, Input, Loading, Modal, px,
 	Text, ThemeSpinner, useAsync, useDisposable, useShortcuts, useTimeUntil } from "./ui";
@@ -898,15 +898,10 @@ function ResolverShortcuts(
 		sorted: [number, ScoreboardTeam][];
 	},
 ) {
-	const [apiClient, setApiClient] = useState<APIClient | null>(null);
 	const [apiKey, setApiKey] = useState("");
+	const [apiKey2, setApiKey2] = useState<string | null>(() => apiKeyClient.auth.apiKey);
 	const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
 	const [viewTeamDetails, setViewTeamDetails] = useState(false);
-	useEffect(() => {
-		if (LocalStorage.apiKey != undefined) {
-			setApiClient(new APIClient(apiBaseUrl, { apiKey: LocalStorage.apiKey, session: null }));
-		}
-	}, []);
 
 	useShortcuts({ shortcut: "e", onClick: useCallback(() => setApiKeyModalOpen(true), []) });
 
@@ -922,9 +917,9 @@ function ResolverShortcuts(
 		: scoreboard.resolvingState.index;
 
 	const mod = useAsync(useCallback(async (props: Partial<ContestProperties>) => {
-		if (apiClient == null) throw new Error("Not logged in.");
-		await apiClient.request("setProperties", props);
-	}, [apiClient]));
+		if (apiKey2 == null) throw new Error("Not logged in.");
+		await apiKeyClient.request("setProperties", props);
+	}, [apiKey2]));
 
 	const modResIndex = useCallback(
 		(idx: ContestProperties["resolveIndex"]) => mod.run({ resolveIndex: idx }),
@@ -1016,8 +1011,8 @@ function ResolverShortcuts(
 				ev.preventDefault();
 				if (ev.currentTarget.reportValidity()) {
 					LocalStorage.apiKey = apiKey;
-					setApiClient(new APIClient(apiBaseUrl, { apiKey, session: null }));
 					setApiKeyModalOpen(false);
+					setApiKey2(apiKey);
 				}
 			}}>
 				Enter API Key
@@ -1028,7 +1023,7 @@ function ResolverShortcuts(
 	</>;
 }
 
-export function ScoreboardPage() {
+export default function ScoreboardPage() {
 	const [actualScoreboard, setActualScoreboard] = useState<Scoreboard | null>(null);
 	const [events, setEvents] = useState<{ solve: SolveEvent; newScoreboard: Scoreboard }[]>([]);
 	const [judging, setJudging] = useState<SolveEvent[]>([]);

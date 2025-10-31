@@ -209,7 +209,8 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 	</MainContainer>;
 }
 
-const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.ScoreboardPage));
+const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.default));
+const LazyPresentationPage = lazy(() => import("./presentation").then(v => v.default));
 
 const NotFound = () =>
 	<ErrorPage errName="Not found">
@@ -257,6 +258,7 @@ function InnerApp() {
 		<Route path="/login" component={LoginPage} />
 		<Route path="/verify" component={VerifyPage} />
 		<Route path="/scoreboard" component={LazyScoreboardPage} />
+		<Route path="/presentation" component={LazyPresentationPage} />
 		<Route default component={NotFound} />
 	</Router>;
 }

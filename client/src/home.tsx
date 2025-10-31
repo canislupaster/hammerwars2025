@@ -209,12 +209,62 @@ export class Pattern2 extends Pattern {
 	}
 }
 
+export class Pattern3 extends Pattern {
+	startProb = 0;
+	#r = -Math.log(1-0.4);
+	#nextUp = -1;
+	#start = true;
+	update({ dt, nx, ny, sec, flipped }: PatternArgs) {
+		if (Math.random() > Math.exp(-this.#r*dt) || this.#start) {
+			this.#start = false;
+			flipped[Math.floor(Math.random()*ny)][0] = true;
+		}
+		if (sec > this.#nextUp) {
+			this.#nextUp = sec+1+Math.random()*2;
+			const neighbor = [[-1, 0], [1, 0], [0, 1], [0, -1], [0, 0]];
+			let curCost = Infinity;
+			let cur: [number, number][] = [];
+			for (let i = 0; i < ny; i++) {
+				for (let j = 0; j < nx; j++) {
+					if (flipped[i][j]) {
+						let c = 0;
+						for (const [di, dj] of neighbor) {
+							c += i+di >= 0 && i+di < ny && j+dj >= 0 && j+dj <= nx
+								? (flipped[i+di][j+dj] ? -1 : 1)
+								: 0;
+						}
+						if (c < curCost) {
+							cur = [[i, j]];
+							curCost = c;
+						} else if (c == curCost) cur.push([i, j]);
+					}
+				}
+			}
+			const nops = Math.ceil(Math.random()*5);
+			for (let i = 1; i < cur.length; i++) {
+				const j = Math.floor(Math.random()*(i+1));
+				[cur[i], cur[j]] = [cur[j], cur[i]];
+			}
+			const short = cur.slice(0, nops);
+			for (const [i, j] of short) {
+				for (const [di, dj] of neighbor) {
+					if (i+di >= 0 && i+di < ny && j+dj >= 0 && j+dj <= nx) {
+						flipped[i+di][j+dj] = !flipped[i+di][j+dj];
+					}
+				}
+			}
+		}
+	}
+}
+
 export function PatternBg(
-	{ velocity, pat, grad, opacity }: {
+	{ velocity, uniformVelocity, pat, grad, opacity, flipAnim }: {
 		velocity?: number;
+		uniformVelocity?: boolean;
 		pat: () => Pattern;
 		grad?: boolean;
 		opacity?: number;
+		flipAnim?: boolean;
 	},
 ) {
 	const container = useRef<HTMLDivElement>(null);
@@ -245,7 +295,10 @@ export function PatternBg(
 				}));
 
 			el.replaceChildren(...nodes.flat());
-			const speeds = fill(2, fill(ny, () => (velocity ?? 1)*(Math.random()/5+0.1)));
+			const speeds = fill(
+				2,
+				fill(ny, () => (velocity ?? 1)*(uniformVelocity == true ? 0.2 : Math.random()/5+0.1)),
+			);
 			let last = performance.now()/1000;
 			const shiftOff = fill(2, i => fill(ny, j => Math.floor(last*speeds[i][j])));
 
@@ -287,7 +340,7 @@ export function PatternBg(
 							brightness[j][0] = 0;
 							shiftOff[l][j]++;
 						}
-						off += sz*(l == 1 ? ease(shift%1) : shift%1);
+						off += sz*(l == 1 && uniformVelocity != true ? ease(shift%1) : shift%1);
 					}
 
 					for (let i = 0; i < nx; i++) {
@@ -300,7 +353,18 @@ export function PatternBg(
 						const close = !offset[j][i].some(x => Math.abs(x) > 0.2);
 						nodes[j][i].style.zIndex = close ? "0" : "-1";
 						const b = brightness[j][i]*(grad == true ? l/w : 1);
-						nodes[j][i].style.background = close ? `hsl(0 0 ${b*100}%)` : `rgba(255,255,255,${b})`;
+						if (flipAnim == true) {
+							nodes[j][i].style.background = "white";
+							nodes[j][i].style.transform = `perspective(200px) scale(${
+								Math.max(0, b-0.2)*0.94
+							}) rotateX(${
+								(brightness[j][i] > target ? -1 : 1)*Math.min(1, 1.2-1.2*b)*90
+							}deg) translateZ(50px)`;
+						} else {
+							nodes[j][i].style.background = close
+								? `hsl(0 0 ${b*100}%)`
+								: `rgba(255,255,255,${b})`;
+						}
 					}
 				}
 
@@ -317,7 +381,7 @@ export function PatternBg(
 			observer.disconnect();
 			if (frame != null) cancelAnimationFrame(frame);
 		};
-	}, [grad, opacity, velocity]);
+	}, [flipAnim, grad, opacity, uniformVelocity, velocity]);
 
 	return <div
 		className="absolute left-0 right-0 top-0 bottom-0 overflow-hidden mix-blend-screen -z-10"

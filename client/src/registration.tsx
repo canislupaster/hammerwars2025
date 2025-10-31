@@ -351,7 +351,8 @@ export default function RegistrationEditor() {
 						valueChange={v => modInfo("name", v == "" ? undefined : v)} />
 					{makeMissingAlert("name", "Name")}
 
-					<Text v="md" className="-mb-2">Discord</Text>
+					<Text v="md" className="-mb-3">Discord</Text>
+					<Text v="dim" className="-mb-1">(Optional, but will help us contact you.)</Text>
 					<Input value={userInfo.discord ?? ""} pattern={validDiscordRe}
 						valueChange={v => modInfo("discord", v.length > 0 ? v : null)} />
 
@@ -454,14 +455,27 @@ export default function RegistrationEditor() {
 
 						<p>
 							The open contest will roughly follow Codeforces rules (see{" "}
-							<Anchor href="https://codeforces.com/blog/entry/4088">here</Anchor> and{" "}
-							<Anchor href="https://codeforces.com/blog/entry/133941">here</Anchor>): you and your
-							team cannot use any ideas, code, conversations, or other resources created after the
-							start of the contest except by your team. There's no one-computer restriction.
+							<Anchor target="_blank" href="https://codeforces.com/blog/entry/4088">here</Anchor>
+							{" "}
+							and{" "}
+							<Anchor target="_blank" href="https://codeforces.com/blog/entry/133941">
+								here
+							</Anchor>): you and your team cannot use any ideas, code, conversations, or other
+							resources created after the start of the contest except by your team. There's no
+							one-computer restriction.
 						</p>
 						<p>
 							During the contest, you are not allowed to communicate about the problems with anyone
 							outside your team. <b>Nontrivial use of AI is strictly prohibited.</b>
+							{" "}
+						</p>
+						<p>
+							As in Codeforces, AI may only be used for translation and &ldquo;syntax and minor
+							coding suggestions.&rdquo; It cannot be used to subsitute reasoning about the problem
+							or your code. If in doubt, read the{" "}
+							<Anchor target="_blank" href="https://codeforces.com/blog/entry/133941">
+								full post
+							</Anchor>.
 						</p>
 
 						<Checkbox checked={userInfo.agreeRules} valueChange={v => modInfo("agreeRules", v)}
@@ -502,6 +516,9 @@ export default function RegistrationEditor() {
 							</Button>
 						</AppTooltip>
 					</div>}
+				{showMissing
+					&& <Alert bad title="Please fill out the missing fields" txt="Scroll up!"
+						className="mt-2" />}
 			</form>
 			<Text v="dim">
 				Last {data.submitted ? "submitted" : "saved"} at{" "}

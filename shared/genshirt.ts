@@ -109,6 +109,21 @@ const rot = (v: V3, ax: number, rad: number) => {
 };
 
 const numCubes = 400;
+const deleteCubes = 0;
+
+function filter(
+	pos: V2,
+	dim: V2,
+	ctx: OffscreenCanvasRenderingContext2D,
+	x: (f: (i: number, j: number) => Uint8ClampedArray) => void,
+) {
+	const data = ctx.getImageData(pos[0], pos[1], dim[0], dim[1]);
+	x((i: number, j: number) => {
+		const idx = (i*dim[0]+j)*4;
+		return data.data.subarray(idx, idx+4);
+	});
+	ctx.putImageData(data, pos[0], pos[1]);
+}
 
 function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number[], dim: number[]) {
 	const shrink = 0.7, shrinkMax = 0.03, backGap = 0.04;
@@ -149,9 +164,14 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 		}
 	}
 
-	const rects: { pts: V3[]; dir: V3; flip: boolean; l: number; avg: V3 }[] = [];
-	while (cubes.size() > 0) {
-		const cube = cubes.pop();
+	const rects: { pts: V3[]; dir: V3; flip: boolean; l: number }[] = [];
+
+	let cubeArray: Cube[] = [];
+	while (cubes.size() > 0) cubeArray.push(cubes.pop());
+	rng.shuffle(cubeArray);
+	cubeArray = cubeArray.slice(0, cubeArray.length-deleteCubes);
+
+	for (const cube of cubeArray) {
 		const cent = add3s(cube.pos, cube.l/2);
 		cube.l = Math.max(cube.l*shrink, cube.l-shrinkMax);
 		for (let i = 0; i < 6; i++) {
@@ -163,29 +183,87 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 			const rect = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([u, v]) =>
 				add3(t, add3(mul3(dir1, u), mul3(dir2, v)))
 			);
-			rects.push({
-				pts: rect,
-				avg: mul3(rect.reduce((a, b) => add3(a, b), [0, 0, 0]), 1/rect.length),
-				dir,
-				flip: rng.nextRange(0, 1) == 0,
-				l: cube.l,
-			});
+			rects.push({ pts: rect, dir, flip: rng.nextRange(0, 1) == 0, l: cube.l });
 		}
 	}
 
 	const t = 1;
-	const orbitUp = (t*15+6*(rng.nextFloat()-0.5))/360*Math.PI;
+	const orbitUp = (t*18+6*(rng.nextFloat()-0.5))/360*Math.PI;
 	const orbitRight = (t*60+6*(rng.nextFloat()-0.5))/360*Math.PI;
-	const scale = Math.min(...dim)*0.66;
-	const persp = -0.03;
+	const persp = 0.00;
 	const calcP = (x: number) => 0.95/(1+persp*x);
 	const transform = (pt: V3): V3 => {
 		pt = rot(rot(pt, 1, orbitRight), 0, orbitUp);
 		pt[2] += 5;
-		const sc = scale*calcP(pt[2]);
+		const sc = calcP(pt[2]);
 		return [sc*pt[0]+dim[0]/2+pos[0], sc*pt[1]+dim[1]/2+pos[1], pt[2]];
 	};
-	const nrects = rects.map(({ pts, ...r }) => ({ pts: pts.map(transform), ...r }));
+
+	const minLineWidth = 8;
+	const nrects = rects.map(({ pts, ...r }) => ({ pts: pts.map(transform), ...r })).map(r => {
+		const avg = mul3(r.pts.reduce((a, b) => add3(a, b), [0, 0, 0]), 1/r.pts.length);
+		return { ...r, avg, w: 50*Math.pow(r.l, 0.45)/(1+0.07*avg[2]) };
+	}).filter(({ w }) => w > minLineWidth);
+
+	const ptsPath = (coords: number[][]) => {
+		ctx.beginPath();
+		ctx.moveTo(coords[0][0], coords[0][1]);
+		coords.slice(1).forEach(([x, y]) => ctx.lineTo(x, y));
+		ctx.closePath();
+	};
+
+	const sc = 1, sc2 = 1;
+	const nlines = 11, gridSc = 1.1;
+	const zero: V3 = [0, 0, 0];
+	const hull = (pts: number[][]) => {
+		const out: number[][] = [];
+		pts.sort((a, b) => a[0]-b[0]);
+		for (let side = 0; side <= 1; side++) {
+			if (side) pts.reverse();
+			for (const pt of pts) {
+				while (out.length >= 2) {
+					const a = out[out.length-2], b = out[out.length-1];
+					if ((pt[0]-a[0])*(b[1]-a[1])-(pt[1]-a[1])*(b[0]-a[0]) < 0) break;
+					out.pop();
+				}
+				out.push(pt);
+			}
+		}
+		return out;
+	};
+
+	const boundaryPts: V3[] = [];
+	const faces = fill(6, i => {
+		const dir = fill(3, j => i%3 == j ? i >= 3 ? -1 : 1 : 0) as V3;
+		const [a, b] = [[1, 2], [0, 2], [0, 1]][i%3];
+		const dir1 = fill(3, d => d == a ? 1/2 : 0) as V3;
+		const dir2 = fill(3, d => d == b ? 1/2 : 0) as V3;
+		const cent = mul3(dir, 1/2);
+		const face = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([u, v]) =>
+			add3(cent, add3(mul3(dir1, u), mul3(dir2, v)))
+		).map(a => mul3(a, sc2)).map(transform);
+		if (i < 3) boundaryPts.push(...face);
+		return face;
+	});
+
+	const boundaryHull = hull(boundaryPts);
+	const bbox = fill(
+		2,
+		i => fill(2, j => (i == 0 ? Math.min : Math.max)(...boundaryPts.map(v => v[j]))),
+	);
+
+	ctx.save();
+	const scale = Math.min(dim[0]/(bbox[1][0]-bbox[0][0]), dim[1]/(bbox[1][1]-bbox[0][1]));
+	ctx.translate(
+		pos[0]+dim[0]/2-scale*(bbox[0][0]+bbox[1][0])/2,
+		pos[1]+dim[1]/2-scale*(bbox[0][1]+bbox[1][1])/2,
+	);
+	ctx.scale(scale, scale);
+
+	const setWidth = (l: number) => {
+		l = Math.round(l);
+		ctx.lineWidth = l < minLineWidth ? 0 : l/scale;
+	};
 
 	const gridLine = (from: V3, to: V3, w: number, col: string) => {
 		ctx.beginPath();
@@ -198,106 +276,61 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 		ctx.lineTo(to[0], to[1]);
 
 		ctx.strokeStyle = col;
-		ctx.lineWidth = 50*w;
+		setWidth(80*w);
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
 		ctx.stroke();
 	};
 
-	const ptsPath = (coords: number[][]) => {
-		ctx.beginPath();
-		ctx.moveTo(coords[0][0], coords[0][1]);
-		coords.slice(1).forEach(([x, y]) => ctx.lineTo(x, y));
-		ctx.closePath();
-	};
-
-	const sc = 1, sc2 = 1;
-	const nlines = 16, gridSc = 1.1;
-	const zero: V3 = [0, 0, 0];
-	const drawStuff = () => {
+	const drawGrid = () => {
 		for (let ax = 0; ax < 3; ax++) {
 			const xd: V3 = add3s(zero, -0.5);
 			const dir = fill(3, d => d == ax ? gridSc : 0) as V3;
-			gridLine(xd, add3(dir, xd), 0.6, "#c1e3d7b5");
+			gridLine(xd, add3(dir, xd), 0.6, "white");
 			for (let odir = 0; odir < 3; odir++) {
 				if (odir != ax) {
 					const mul = ax != 1 && odir != 1 ? 0.4 : (odir == 1 ? 0.7 : 1);
 					const od = fill(3, d => d == odir ? gridSc : 0) as V3;
 					for (let i = 1; i < nlines; i++) {
 						const base = add3(xd, mul3(od, i/nlines));
-						gridLine(base, add3(base, dir), mul*(0.2+0.5/(1+i)), "#b6b8b88d");
+						gridLine(base, add3(base, dir), mul*(0.2+0.5/(1+i)), "#FB9AAB");
 					}
 				}
 			}
 		}
 	};
 
-	const hull = (pts: number[][]) => {
-		const out: number[][] = [];
-		pts.sort((a, b) => a[0]-b[0]);
-		for (let side = 0; side <= 1; side++) {
-			if (side) pts.reverse();
-			for (const pt of pts) {
-				while (out.length >= 2) {
-					const a = out[out.length-2], b = out[out.length-1];
-					if ((pt[0]-a[0])*(b[1]-a[1])-(pt[1]-a[1])*(b[0]-a[0]) > 0) break;
-					out.pop();
-				}
-				out.push(pt);
-			}
-		}
-		return out;
-	};
-
-	const boundaryPts: V3[] = [];
-	for (let i = 0; i < 6; i++) {
-		const dir = fill(3, j => i%3 == j ? i >= 3 ? -1 : 1 : 0) as V3;
-		const [a, b] = [[1, 2], [0, 2], [0, 1]][i%3];
-		const dir1 = fill(3, d => d == a ? 1/2 : 0) as V3;
-		const dir2 = fill(3, d => d == b ? 1/2 : 0) as V3;
-		const cent = mul3(dir, 1/2);
-		const face = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([u, v]) =>
-			add3(cent, add3(mul3(dir1, u), mul3(dir2, v)))
-		).map(a => mul3(a, sc2)).map(transform);
-		if (i < 3) boundaryPts.push(...face);
-		else {
-			ptsPath(face);
-			const g = ctx.createLinearGradient(face[1][0], face[1][1], face[3][0], face[3][1]);
-			g.addColorStop(0, "#290505ff");
-			g.addColorStop(1, "#000000ff");
-			ctx.fillStyle = i == 3 ? g : "black";
+	for (let i = 3; i < 6; i++) {
+		const face = faces[i];
+		ptsPath(face);
+		const g = ctx.createLinearGradient(face[1][0], face[1][1], face[3][0], face[3][1]);
+		g.addColorStop(0, "#290505ff");
+		g.addColorStop(1, "#000000ff");
+		ctx.fillStyle = g;
+		if (i == 3) {
 			ctx.fill();
+			ctx.save();
+			ctx.clip();
+			drawGrid();
+			ctx.restore();
 		}
 	}
 
-	ctx.save();
+	nrects.sort((a, b) => b.avg[2]-a.avg[2]);
+	for (const r of nrects) {
+		ptsPath(r.pts);
 
-	ctx.beginPath();
-	const boundaryHull = hull(boundaryPts);
-	ptsPath(boundaryHull);
-	ctx.clip();
+		ctx.globalCompositeOperation = "source-atop";
+		ctx.fillStyle = "rgba(0,0,0,0.3)";
+		ctx.fill();
+		ctx.globalCompositeOperation = "source-over";
 
-	drawStuff();
-
-	ctx.restore();
-
-	for (const r of nrects.sort((a, b) => b.avg[2]-a.avg[2])) {
-		ctx.beginPath();
-
-		ctx.moveTo(r.pts[0][0], r.pts[0][1]);
-		r.pts.slice(1).forEach(pt => ctx.lineTo(pt[0], pt[1]));
-		ctx.closePath();
-
+		setWidth(r.w);
 		ctx.strokeStyle = "white";
-		ctx.lineWidth = 40*r.l/(1+0.1*r.avg[2]);
+
 		ctx.lineCap = "round";
 		ctx.lineJoin = "round";
 		ctx.stroke();
-
-		ctx.globalCompositeOperation = "source-atop";
-		ctx.fillStyle = "rgba(0,0,0,0.25)";
-		ctx.fill();
-		ctx.globalCompositeOperation = "source-over";
 	}
 
 	ctx.save();
@@ -326,11 +359,15 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 		ptsPath(rect);
 
 		const [gradStart, gradEnd] = [-1, 1].map(v => transform(add3(cent, mul3(dir1, v))));
-		const grad = ctx.createLinearGradient(gradStart[0], gradStart[1], gradEnd[0], gradEnd[1]);
 		const baseHex = ["#7affd9", "#8fecff", "#b3fffc"][i%3];
-		grad.addColorStop(0, `${baseHex}00`);
-		grad.addColorStop(1, `${baseHex}aa`);
-		ctx.fillStyle = grad;
+		if (i == 3) {
+			const grad = ctx.createLinearGradient(gradStart[0], gradStart[1], gradEnd[0], gradEnd[1]);
+			grad.addColorStop(0, `${baseHex}00`);
+			grad.addColorStop(1, `${baseHex}aa`);
+			ctx.fillStyle = grad;
+		} else {
+			ctx.fillStyle = `${baseHex}aa`;
+		}
 		ctx.globalCompositeOperation = "color";
 		ctx.fill();
 
@@ -340,7 +377,7 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 
 		ctx.globalCompositeOperation = "source-over";
 		ctx.strokeStyle = "white";
-		ctx.lineWidth = 30;
+		setWidth(30);
 		ctx.stroke();
 	}
 
@@ -348,8 +385,9 @@ function drawCubes(rng: RNG, ctx: OffscreenCanvasRenderingContext2D, pos: number
 
 	ptsPath(boundaryHull);
 	ctx.strokeStyle = "white";
-	ctx.lineWidth = 20;
+	setWidth(30);
 	ctx.stroke();
+	ctx.restore();
 }
 
 // color conversions by Kamil Kiełczewski
@@ -381,39 +419,22 @@ export async function makeShirt(
 	const totalW = 6900, totalH = 8284;
 	const realW = Math.round(totalW/downScale), realH = Math.round(totalH/downScale);
 	const canvas = canvasConstructor(realW, realH);
-	const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+	const ctx = canvas.getContext("2d", {
+		willReadFrequently: true,
+		imageSmoothingEnabled: false,
+		antialias: false,
+	})!;
+
 	ctx.scale(realW/totalW, realH/totalH);
 	ctx.drawImage(assets.base, 0, 0);
 
-	const filter = (x: (prev: number[], coord: V2) => number[]) => {
-		// due to a bug in skia canvas
-		ctx.resetTransform();
-		const data = ctx.getImageData(0, 0, realW, realH);
-		for (let i = 0, j = 0; i < data.data.length; i += 4, j++) {
-			data.data.set(
-				new Uint8ClampedArray(
-					x([...data.data.slice(i, i+4)], [downScale*(j%realW), downScale*Math.floor(j/realW)]),
-				),
-				i,
-			);
-		}
-		ctx.putImageData(data, 0, 0);
-		ctx.scale(realW/totalW, realH/totalH);
-	};
-
-	const off = [-1433.8, 1166+(organizer == true ? 1637-1352 : 0)] as const,
-		dim = [10517.8, 5916.8] as const;
+	const off = [613, 1330+(organizer == true ? 1637-1352 : 30)], dim = [6276, 5181];
 	const off2 = off.map(v => Math.max(0, v));
 	const dim2 = fill(2, i => Math.min(off[i]+dim[i], [totalW, totalH][i])-off2[i]);
-	off2[0] += 690-466+524-615+200;
-	off2[1] += 1634-1451-50+1175-1404-100;
 
 	const rng = new RNG(seed);
 
 	drawCubes(rng, ctx, off2, dim2);
-	filter(x => {
-		return !x.slice(0, -1).some(v => v > 50) ? [0, 0, 0, 0] : x;
-	});
 
 	const minTextSize = 100;
 	const condense = 4;
@@ -438,10 +459,15 @@ export async function makeShirt(
 	const left = Math.min(totalW-Math.max(w1, w2)-195, 1694/hOverW);
 
 	hue += 352;
-	filter(old => {
-		const hsv = rgb2hsv(old.slice(0, -1) as V3);
-		hsv[0] = (hsv[0]+hue)%360;
-		return [...hsv2rgb(hsv), old[3]];
+	filter([0, 0], [realW, realH], ctx, old => {
+		for (let i = 0; i < realH; i++) {
+			for (let j = 0; j < realW; j++) {
+				const px = old(i, j);
+				const hsv = rgb2hsv([...px.slice(0, -1)] as V3);
+				hsv[0] = (hsv[0]+hue)%360;
+				px.set([...hsv2rgb(hsv), px[3]]);
+			}
+		}
 	});
 
 	if (assets.logo) {
@@ -449,6 +475,20 @@ export async function makeShirt(
 		const h = hOverW*left;
 		ctx.drawImage(assets.bracket, totalW-left, totalH-h, left, h);
 		ctx.drawImage(assets.logo, totalW-left, totalH-h+pad, left-pad, left-pad);
+	}
+
+	const threshold = 60;
+	if (quality == "high") {
+		filter([0, 0], [realW, realH], ctx, old => {
+			for (let i = 0; i < realH; i++) {
+				for (let j = 0; j < realW; j++) {
+					const v = old(i, j);
+					if (rgb2hsv([...v] as V3)[2] < threshold) {
+						old(i, j).set([0, 0, 0, 0]);
+					}
+				}
+			}
+		});
 	}
 
 	return canvas;
