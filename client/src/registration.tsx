@@ -259,6 +259,7 @@ export default function RegistrationEditor() {
 	const loading = info.loading || updateInfo.loading || updateTeam.loading || leaveTeam.loading
 		|| joinTeam.loading || changePassword.loading || updateResume.loading;
 	const team = data?.team ?? null;
+	const curTeam = team == null ? null : { name: team.name, funFact: team.funFact, logo: null };
 
 	const [hasClosed, setHasClosed] = useState<boolean | null>(null);
 	useEffect(() => {
@@ -544,7 +545,7 @@ export default function RegistrationEditor() {
 				<form onSubmit={ev => {
 					ev.preventDefault();
 					if (ev.currentTarget.reportValidity()) {
-						updateTeam.call({ name: createTeamName, logo: null });
+						updateTeam.call({ name: createTeamName, funFact: null, logo: null });
 						setCreateTeamOpen(false);
 					}
 				}} className="contents">
@@ -573,7 +574,7 @@ export default function RegistrationEditor() {
 				</form>
 			</Modal>
 
-			{team
+			{team && curTeam
 				? <div className="flex flex-col gap-3 max-w-xl">
 					{virtualMember && inPersonMember
 						&& <Alert bad title="Inconsistent attendance modality" txt={
@@ -597,7 +598,7 @@ export default function RegistrationEditor() {
 								{...teamNameValidity} pattern={validNameRe} onBlur={ev => {
 								if (registrationClosed) return;
 								teamNameValidity.onBlur(ev);
-								if (data?.team) updateTeam.call({ name: data.team?.name, logo: null });
+								if (data?.team) updateTeam.call({ ...curTeam, name: data.team?.name });
 							}} />}
 					</div>
 
@@ -608,7 +609,7 @@ export default function RegistrationEditor() {
 							<img src={new URL(team.logo, apiBaseUrl).href}
 								className="max-h-32 object-contain rounded" />
 							<Button disabled={registrationClosed}
-								onClick={() => updateTeam.call({ name: team.name, logo: "remove" })}>
+								onClick={() => updateTeam.call({ ...curTeam, logo: "remove" })}>
 								Remove logo
 							</Button>
 						</div>}
@@ -622,7 +623,7 @@ export default function RegistrationEditor() {
 							onUpload={file => {
 								void toBase64(file).then(base64 =>
 									updateTeam.call({
-										name: team.name,
+										...curTeam,
 										logo: { base64, mime: file.type as typeof logoMimeTypes[number] },
 									})
 								);

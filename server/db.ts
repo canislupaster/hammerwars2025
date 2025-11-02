@@ -11,6 +11,7 @@ type Database = {
 		name: string;
 		domJudgeId: string | null;
 		domJudgePassword: string | null;
+		funFact: string | null;
 	};
 	teamLogo: { id: GeneratedAlways<number>; team: number; logo: Buffer; logoMime: string };
 	teamScreenshot: {
@@ -37,6 +38,7 @@ type Database = {
 export type UserData = {
 	info: PartialUserInfo;
 	submitted: UserInfo | null;
+	confirmedAttendance?: number;
 	lastEdited: number;
 	passwordHash: string;
 };
@@ -131,6 +133,14 @@ const migrator = new Migrator({
 						await db.schema.dropTable("teamScreenshot").execute();
 						await db.schema.dropTable("teamLogo").execute();
 						await db.schema.dropTable("announcement").execute();
+					},
+				} satisfies Migration,
+				"2_fun_fact": {
+					async up(db) {
+						await db.schema.alterTable("team").addColumn("funFact", "text").execute();
+					},
+					async down(db) {
+						await db.schema.alterTable("team").dropColumn("funFact").execute();
 					},
 				} satisfies Migration,
 			};

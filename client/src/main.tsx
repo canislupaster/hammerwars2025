@@ -3,11 +3,11 @@ import { IconMail } from "@tabler/icons-preact";
 import { ComponentChildren, render } from "preact";
 import { lazy, LocationProvider, Route, Router, useLocation } from "preact-iso";
 import { useCallback, useEffect, useErrorBoundary, useMemo, useRef, useState } from "preact/hooks";
-import { APIError } from "../../shared/util";
+import { APIError, maxFactLength } from "../../shared/util";
 import { LocalStorage, useRequest } from "./clientutil";
 import { Home } from "./home";
-import { Alert, Anchor, Button, Card, Container, GotoContext, Input, Loading, Text, ThemeContext,
-	useGoto, useTitle } from "./ui";
+import { Alert, Anchor, bgColor, Button, Card, Container, Divider, GotoContext, Input, Loading,
+	Text, Textarea, ThemeContext, useGoto, useTitle, useValidity } from "./ui";
 
 export function Footer() {
 	return <div className="flex flex-col items-center w-full py-5 px-5">
@@ -82,6 +82,10 @@ function RegisterPage() {
 					}
 				}} className="flex flex-col gap-3">
 					<Text v="smbold">Email</Text>
+					<Text v="dim" className="-mt-2">
+						Try using your personal email if you don't receive the verification link in your school
+						email.
+					</Text>
 					<Input value={email} valueChange={v => setEmail(v)} type="email" required />
 					<Button>Register</Button>
 				</form>}
@@ -92,7 +96,7 @@ function RegisterPage() {
 		</MainContainer>;
 }
 
-function VerifyPage() {
+function useEmailVerification() {
 	const loc = useLocation();
 	const { call, loading, ...verified } = useRequest({ route: "checkEmailVerify" });
 	useEffect(() => {
@@ -103,6 +107,13 @@ function VerifyPage() {
 		}
 	}, [call, loc.query]);
 
+	return {
+		invalid: verified.current == null || verified.current.type != "ok" || !verified.current.data,
+		req: loading ? null : verified.request,
+	};
+}
+
+function VerifyPage() {
 	const [pass, setPass] = useState("");
 	const goto = useGoto();
 	const createAccReq = useRequest({
@@ -114,8 +125,11 @@ function VerifyPage() {
 		},
 	});
 
-	if (loading || createAccReq.loading) return <Loading />;
-	if (verified.current == null || verified.current.type != "ok" || !verified.current.data) {
+	const verified = useEmailVerification();
+	const r = verified.req;
+
+	if (r == null || createAccReq.loading) return <Loading />;
+	if (verified.invalid) {
 		return <ErrorPage errName="This verification link is invalid">
 			<Text>Please contact us for support through our Discord.</Text>
 		</ErrorPage>;
@@ -126,7 +140,7 @@ function VerifyPage() {
 			<form onSubmit={ev => {
 				ev.preventDefault();
 				if (ev.currentTarget.reportValidity()) {
-					createAccReq.call({ id: verified.request.id, key: verified.request.key, password: pass });
+					createAccReq.call({ id: r.id, key: r.key, password: pass });
 				}
 			}} className="flex flex-col gap-3">
 				<Text v="big">Set your password</Text>
@@ -209,6 +223,94 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 	</MainContainer>;
 }
 
+function ConfirmAttendanceInner() {
+	const info = useRequest({ route: "getInfo", initRequest: true });
+	const c = { handler: () => info.call() };
+	const updateTeamReq = useRequest({ route: "setTeam", ...c });
+	const confirmReq = useRequest({ route: "confirmAttendance", ...c });
+	const unsubmitReq = useRequest({ route: "updateInfo", ...c });
+	const [funFact, setFunFact] = useState("");
+
+	const d = info.current;
+	useEffect(() => {
+		setFunFact(d?.data.team?.funFact ?? "");
+	}, [d]);
+
+	if (unsubmitReq.loading || confirmReq.loading || info.loading || d == null) return <Loading />;
+	const r = d?.data.submitted == false
+		? "cancelled"
+		: info.current.data.confirmedAttendance
+		? "confirmed"
+		: null;
+
+	if (r == "cancelled") {
+		return <>
+			<Text v="md">You are no longer registered for HammerWars</Text>
+			<Divider />
+			<Text v="bold">i'm actualy going to cry :(</Text>
+			<img src="/sad-sob.gif" className="mt-2" />
+			<Text className="mt-2">
+				If that's a mistake, you can <Anchor href="/register">register again</Anchor>.
+			</Text>
+		</>;
+	}
+
+	return <form onSubmit={ev => {
+		const confirm = ev.submitter?.getAttribute("name") != "cancel";
+		ev.preventDefault();
+		if (!ev.currentTarget.reportValidity()) return;
+		confirmReq.call();
+		if (confirm) {
+			if (d.data.team != null) {
+				updateTeamReq.call({
+					name: d.data.team.name,
+					funFact: funFact.length == 0 ? null : funFact,
+					logo: null,
+				});
+			}
+		} else {
+			unsubmitReq.call({ info: d.data.info, submit: false });
+		}
+	}} className="flex flex-col gap-2">
+		<Text v="big">Confirm your attendance</Text>
+		{info.current.data.team != null && <>
+			<Text>Fun fact about your team</Text>
+			<Text className="-mt-2" v="dim">
+				(Optional{funFact.length > 0 && `, ${funFact.length}/${maxFactLength}`})
+			</Text>
+			<Textarea value={funFact} onInput={ev => setFunFact(ev.currentTarget.value)} minLength={0}
+				maxLength={maxFactLength} />
+		</>}
+		<div className="flex flex-row gap-2">
+			<Button className={bgColor.md} name="confirm">Confirm</Button>
+			<Button className={bgColor.red} name="cancel">Cancel</Button>
+		</div>
+		{r == "confirmed"
+			&& <Alert className={bgColor.green} title="Thanks for confirming!"
+				txt="We can't wait to see you there!" />}
+	</form>;
+}
+
+function ConfirmAttendance() {
+	const verified = useEmailVerification();
+	const createAccReq = useRequest({ route: "createAccount" });
+	useEffect(() => {
+		if (
+			verified.req != null && !verified.invalid && !createAccReq.loading
+			&& createAccReq.current == null
+		) {
+			createAccReq.call({ ...verified.req, password: null });
+		}
+	}, [createAccReq, verified]);
+
+	if (verified.req == null || createAccReq.loading) return <Loading />;
+	if (verified.invalid) return <ErrorPage errName="Invalid link." />;
+
+	return <MainContainer>
+		<ConfirmAttendanceInner />
+	</MainContainer>;
+}
+
 const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.default));
 const LazyPresentationPage = lazy(() => import("./presentation").then(v => v.default));
 
@@ -255,6 +357,7 @@ function InnerApp() {
 	return <Router>
 		<Route path="/" component={Home} />
 		<Route path="/register" component={RegisterPage} />
+		<Route path="/confirm" component={ConfirmAttendance} />
 		<Route path="/login" component={LoginPage} />
 		<Route path="/verify" component={VerifyPage} />
 		<Route path="/scoreboard" component={LazyScoreboardPage} />

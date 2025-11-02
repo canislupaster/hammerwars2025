@@ -30,6 +30,14 @@ if (typeof WorkerGlobalScope != "undefined" && self instanceof WorkerGlobalScope
 		};
 
 		try {
+			for (const weight of [600, 900]) {
+				const font = new FontFace("IBM Plex Sans", "url(/IBMPlexSans-VariableFont_wdth,wght.ttf)", {
+					weight: `${weight}`,
+				});
+				fonts.add(font);
+				await font.load();
+			}
+
 			const canvas = await makeShirt({
 				canvasConstructor: (w, h) => new OffscreenCanvas(w, h),
 				team: msg.organizer ? "" : msg.team,
@@ -40,8 +48,8 @@ if (typeof WorkerGlobalScope != "undefined" && self instanceof WorkerGlobalScope
 				assets: {
 					logo: msg.logo != undefined ? await loadImage(msg.logo) : undefined,
 					base: msg.organizer
-						? await loadImage("/shirtbase-organizer.png")
-						: await loadImage("/shirtbase.png"),
+						? await loadImage("/shirt-organizer.webp")
+						: await loadImage("/shirt.webp"),
 					bracket: await loadImage("/shirtbracket.png"),
 				},
 				organizer: msg.organizer,

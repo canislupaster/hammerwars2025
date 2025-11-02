@@ -21,7 +21,32 @@
 			"options": {
 				"cwd": "${workspaceFolder}/client"
 			},
-			"problemMatcher": []
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "build client (dev)",
+			"type": "shell",
+			"command": "pnpm run build --mode development",
+			"options": {
+				"cwd": "${workspaceFolder}/client"
+			},
+			"problemMatcher": [
+				"$tsc"
+			]
+		},
+		{
+			"label": "lint",
+			"type": "shell",
+			"command": "pnpm run lint",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$tsc",
+				"$eslint-stylish",
+			]
 		}
 	]
 }

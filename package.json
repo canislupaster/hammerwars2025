@@ -1,4 +1,7 @@
 {
+	"scripts": {
+		"lint": "pnpm exec dprint check && pnpm exec tsc --noEmit --project tsconfig.app.json && pnpm exec tsc --noEmit --project tsconfig.node.json && pnpm exec eslint . --max-warnings=0"
+	},
 	"devDependencies": {
 		"@eslint/js": "^9",
 		"globals": "^16",

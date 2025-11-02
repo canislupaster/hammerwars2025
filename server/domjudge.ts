@@ -3,7 +3,7 @@ import { Queue } from "../shared/queue";
 import { ContestProperties, delay, DOMJudgeActiveContest, getTeamLogoURL, handleNDJSONResponse,
 	Scoreboard, ScoreboardLastSubmission, ScoreboardTeam, throttle } from "../shared/util";
 import { EventEmitter, getDb, getProperty, Mutable, propertiesChanged, transaction } from "./db";
-import { Account, BaseNotification, Judgement, Notification, Problem, Submission,
+import { Account, BaseNotification, Judgement, Language, Notification, Problem, Submission,
 	Team } from "./domjudge_types";
 import { env } from "./main";
 
@@ -51,6 +51,7 @@ function updateMapFromNotification<T extends { id: string }>(
 type DOMJudgeData = {
 	problemInfo: Map<string, Problem>;
 	judgements: Map<string, Judgement>;
+	languages: Map<string, Language>;
 	submission: Map<string, Submission>;
 	teams: Map<string, Team>;
 	accounts: Map<string, Account>;
@@ -65,6 +66,7 @@ const makeDomJudgeData = (): DOMJudgeData => ({
 	problemInfo: new Map<string, Problem>(),
 	judgements: new Map<string, Judgement>(),
 	submission: new Map<string, Submission>(),
+	languages: new Map<string, Language>(),
 	teams: new Map<string, Team>(),
 	accounts: new Map<string, Account>(),
 	domJudgeIdToId: new Map<string, number>(),
@@ -371,8 +373,16 @@ export class DOMJudge extends DisposableStack {
 			const listener = this.#relevantPropertiesChanged.on(() => abort.abort(new PollAbortError()));
 			try {
 				const res = await this.domJudgeApi("event-feed?stream=false", {
-					types: ["contests", "problems", "state", "accounts", "teams", "submissions", "judgements"]
-						.join(","),
+					types: [
+						"contests",
+						"problems",
+						"state",
+						"accounts",
+						"teams",
+						"submissions",
+						"judgements",
+						"languages",
+					].join(","),
 					since_token: this.#data.lastUpdate != null ? this.#data.lastUpdate : undefined,
 				}, abort.signal);
 				if (!res.ok) {
@@ -433,6 +443,8 @@ export class DOMJudge extends DisposableStack {
 			} else if (notif.type == "judgements") {
 				updateMapFromNotification(this.#data.judgements, notif);
 				shouldUpdateJudgements = true;
+			} else if (notif.type == "languages") {
+				updateMapFromNotification(this.#data.languages, notif);
 			}
 
 			if (notif.token != undefined) this.#data.lastUpdate = notif.token;
@@ -450,38 +462,67 @@ export class DOMJudge extends DisposableStack {
 	}
 
 	async getPreFreezeSolutions() {
-		const out: {
-			team: number;
-			problem: string;
-			name: string;
-			source: string;
-			runtime: number | null;
-		}[] = [];
+		const verdicts = new Map<number, Map<string, number>>();
 		const subJudgements = Map.groupBy(this.#data.judgements.values(), j => j.submission_id);
 		const freeze = this.scoreboard.v.freezeTimeMs;
+
+		type Solution = {
+			team: number;
+			problem: string;
+			tl: number;
+			name: string;
+			languageName: string;
+			source: string;
+			contestTime: number;
+			runtime: number | null;
+		};
+
+		const byTeamProblem = new Map<number, Map<string, Solution>>();
 		for (const v of this.#data.submission.values()) {
 			const team = this.#data.domJudgeIdToId.get(v.team_id);
 			const prob = this.#data.problemInfo.get(v.problem_id);
+			const lang = this.#data.languages.get(v.language_id);
 			const judgement = subJudgements.get(v.id)?.[0];
 			if (
-				team == null || prob == null || judgement == null || judgement.end_time == null
+				team == null || prob == null || judgement == null || lang == null
+				|| judgement.end_time == null
 				|| (freeze != null && Date.parse(v.time) >= freeze)
 			) continue;
+
 			const code = await (await this.domJudgeApi(`submissions/${v.id}/source-code`)).json() as {
 				filename: string;
 				source: string;
-			};
+			}[];
+
+			if (code.length == 0) continue;
+
+			if (judgement.judgement_type_id != null) {
+				const m = verdicts.get(team) ?? new Map<string, number>();
+				m.set(judgement.judgement_type_id, (m.get(judgement.judgement_type_id) ?? 0)+1);
+				verdicts.set(team, m);
+			}
+
 			if (judgement.judgement_type_id == "AC") {
-				out.push({
-					team,
-					problem: prob.label,
-					name: code.filename,
-					source: code.source,
-					runtime: judgement.max_run_time ?? null,
-				});
+				const m = byTeamProblem.get(team) ?? new Map<string, Solution>();
+				const old = m.get(prob.label);
+				const contestTime = relTimeToMs(v.contest_time);
+				if (old == null || old.contestTime < contestTime) {
+					m.set(prob.label, {
+						team,
+						problem: prob.label,
+						tl: prob.time_limit,
+						name: code[0].filename,
+						languageName: lang.name,
+						source: Buffer.from(code[0].source, "base64").toString("utf-8"),
+						contestTime,
+						runtime: judgement.max_run_time ?? null,
+					});
+				}
+				byTeamProblem.set(team, m);
 			}
 		}
-		return out;
+
+		return [[...byTeamProblem.values().flatMap(v => v.values())], verdicts] as const;
 	}
 
 	start() {

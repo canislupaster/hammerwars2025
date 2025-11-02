@@ -137,10 +137,6 @@ export function useFeed<T extends keyof FeedAPI>(
 	onUpdate: (x: FeedAPI[T]["response"]) => void,
 	...params: APIRequestBase<T>
 ) {
-	const onUpdateRef = useRef(onUpdate);
-	useEffect(() => {
-		onUpdateRef.current = onUpdate;
-	}, [onUpdate]);
 	const [signal, setSignal] = useState<AbortSignal | null>(null);
 	useEffect(() => {
 		const controller = new AbortController();
@@ -150,22 +146,19 @@ export function useFeed<T extends keyof FeedAPI>(
 			setSignal(null);
 		};
 	}, []);
-	const async = useAsync(
-		useCallback(async () => {
-			if (signal == null) return;
-			try {
-				console.log(`connecting to ${route}`);
-				for await (const update of apiClient.feed(route, ...params, signal)) {
-					onUpdateRef.current(update as FeedAPI[T]["response"]);
-				}
-				console.log(`disconnected from ${route}`);
-			} catch (e) {
-				if (e instanceof FeedAbortError) return;
-				throw e;
+	const async = useAsync(useCallback(async () => {
+		if (signal == null) return;
+		try {
+			console.log(`connecting to ${route}`);
+			for await (const update of apiClient.feed(route, ...params, signal)) {
+				onUpdate(update as FeedAPI[T]["response"]);
 			}
-		}, [params, route, signal]),
-		{ propagateError: true },
-	);
+			console.log(`disconnected from ${route}`);
+		} catch (e) {
+			if (e instanceof FeedAbortError) return;
+			throw e;
+		}
+	}, [onUpdate, params, route, signal]));
 	useEffect(() => {
 		if (signal != null && !async.attempted) async.run();
 	}, [async, signal]);

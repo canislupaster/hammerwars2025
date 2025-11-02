@@ -95,6 +95,10 @@ function errToJson(err: unknown): ServerResponse<never> & { type: "error" } {
 
 type RateLimitBucket = { since: number; times: number };
 
+function jsonExt(c: HonoContext, obj: unknown, status?: ContentfulStatusCode) {
+	return c.text(stringifyExtra(obj), status, { "Content-Type": "application/json" });
+}
+
 export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, data: APIRoute[K]) {
 	const buckets = new Map<string, RateLimitBucket>();
 	app.post(route, async c => {
@@ -183,7 +187,8 @@ export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, dat
 				) => Promise<APIRouteParameters<K>["output"]>)(c, req);
 
 			const session = c.get("session");
-			return c.json(
+			return jsonExt(
+				c,
 				{
 					type: "ok",
 					data: (resp ?? null) as unknown as (ServerResponse<K> & { type: "ok" })["data"],
@@ -269,7 +274,7 @@ const app = new Hono<HonoEnv>();
 app.onError((err, c) => {
 	console.error("request error", err);
 	const json = errToJson(err);
-	return c.json(json, json.error.status as ContentfulStatusCode);
+	return jsonExt(c, json, json.error.status as ContentfulStatusCode);
 });
 
 const api = new Hono<HonoEnv>();

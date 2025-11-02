@@ -40,8 +40,11 @@ export function setWith<K>(set: ReadonlySet<K> | null, k: K, del?: boolean) {
 	return newSet;
 }
 
+// nodejs compatibility
+type Timeout = ReturnType<typeof setTimeout>;
+
 export function debounce(ms: number) {
-	let ts: number | null = null;
+	let ts: Timeout | null = null;
 	return {
 		call(f: () => void) {
 			if (ts != null) clearTimeout(ts);
@@ -60,7 +63,7 @@ export function debounce(ms: number) {
 }
 
 export function throttle(ms: number, callOnDispose?: boolean) {
-	let ts: number | null = null;
+	let ts: Timeout | null = null;
 	let cur: (() => void) | null = null;
 	return {
 		call(f: () => void) {
@@ -101,6 +104,7 @@ export function parseExtra(str: string | null): unknown {
 
 export const validNameRe = "^[A-Za-z0-9 _\\-]{2,30}$";
 export const validDiscordRe = "^[A-Za-z0-9._]{2,32}$";
+export const maxFactLength = 300;
 export const joinCodeRe = "^\\d{10}$";
 export const logoMimeTypes = ["image/jpeg", "image/png"] as const;
 export const logoMaxSize = 1024*1024*1;
@@ -132,14 +136,38 @@ export type TeamContestProperties = {
 	visibleDirectories: string[];
 };
 
-export type PresentationState = { type: "none" } | { type: "countdown"; to: number } | {
-	type: "submissions";
-	teams: Scoreboard["teams"];
+export type PresentationState = { type: "none" } | { type: "countdown"; to: number; title: string }
+	| {
+		type: "submissions";
+		problems: {
+			label: string;
+			solutions: {
+				title: string;
+				summary: string;
+				language: string;
+				source: string;
+				team: number;
+			}[];
+		}[];
+		teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
+	};
+
+export type SubmissionRankings = {
 	problems: {
 		label: string;
-		solutions: { title: string; summary: string; language: string; source: string; team: number }[];
+		solutions: {
+			category: string;
+			candidates: {
+				score: number;
+				title: string;
+				summary: string;
+				language: string;
+				source: string;
+				team: number;
+			}[];
+		}[];
 	}[];
-	teamVerdicts: { team: number; verdictCounts: ReadonlyMap<string, number> };
+	teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
 };
 
 export type ContestProperties = {
@@ -156,11 +184,8 @@ export type ContestProperties = {
 	focusTeamId: number | null;
 	team: TeamContestProperties;
 	organizerTeamId: number | null;
-	presentation: { type: "submission"; problems: { label: string; intendedSolution: string }[] } | {
-		type: "duel";
-		cfContestId: number;
-		layout: "left" | "both" | "right" | "score";
-	} | null;
+	presentation: { type: "duel"; cfContestId: number; layout: "left" | "both" | "right" | "score" }
+		| PresentationState & { type: "countdown" | "submissions" } | null;
 };
 
 export type Session = { id: number; key: string };
@@ -246,7 +271,7 @@ export type API = {
 	register: { request: { email: string }; response: "sent" | "alreadySent" };
 	login: { request: { email: string; password: string }; response: "incorrect" | null };
 	checkEmailVerify: { request: { id: number; key: string }; response: boolean };
-	createAccount: { request: { id: number; key: string; password: string } };
+	createAccount: { request: { id: number; key: string; password: string | null } };
 	registrationWindow: { response: { open: boolean; closes: number | null } };
 	checkSession: unknown;
 	setPassword: { request: { newPassword: string } };
@@ -256,10 +281,12 @@ export type API = {
 			organizer: boolean;
 			submitted: boolean;
 			lastEdited: number;
+			confirmedAttendance: boolean;
 			team: {
 				id: number;
 				name: string;
 				logo: string | null;
+				funFact: string | null;
 				joinCode: string;
 				members: { name: string | null; email: string; id: number; inPerson: boolean | null }[];
 			} | null;
@@ -275,11 +302,13 @@ export type API = {
 	setTeam: {
 		request: {
 			name: string;
+			funFact: string | null;
 			logo: { base64: string; mime: typeof logoMimeTypes[number] } | "remove" | null;
 		};
 	};
 	joinTeam: { request: { joinCode: string }; response: { full: boolean } };
 	leaveTeam: unknown;
+	confirmAttendance: unknown;
 	getProperties: { response: Partial<ContestProperties> };
 	setProperties: { request: Partial<ContestProperties> };
 	announce: { request: { teams: number[] | "allTeams"; title: string; body: string } };
@@ -309,6 +338,10 @@ export type API = {
 	scoreboard: { feed: true; response: Scoreboard };
 	presentation: { feed: true; response: PresentationState };
 	screenshot: { request: { team: number; data: string; mac: string } };
+	getPreFreezeSolutions: {
+		request: { label: string; intendedSolution: string }[];
+		response: SubmissionRankings;
+	};
 };
 
 export type ServerResponse<K extends keyof API> = { type: "error"; error: APIErrorObject } | {
@@ -387,7 +420,11 @@ export function delay(ms: number, abort?: AbortSignal): Promise<boolean> {
 
 export const getTeamLogoURL = (logoId: number) => `teamLogo/${logoId}`;
 
-class TimeoutAbortError extends Error {}
+class AbortError extends Error {
+	constructor(public timeout: boolean) {
+		super();
+	}
+}
 
 export class APIClient {
 	constructor(
@@ -433,18 +470,18 @@ export class APIClient {
 			const abort = new AbortController();
 			const f = args[args.length-1] as AbortSignal | undefined;
 			if (f != undefined) {
-				const cb = () => abort.abort();
+				const cb = () => abort.abort(new AbortError(false));
 				f.addEventListener("abort", cb);
 				disp.defer(() => f.removeEventListener("abort", cb));
 			}
 
-			let timeout: number | null = null;
+			let timeout: Timeout | null = null;
 			disp.defer(() => {
 				if (timeout != null) clearTimeout(timeout);
 			});
 			const resetTm = () => {
 				if (timeout != null) clearTimeout(timeout);
-				timeout = setTimeout(() => abort.abort(new TimeoutAbortError()), feedTimeout);
+				timeout = setTimeout(() => abort.abort(new AbortError(true)), feedTimeout);
 			};
 			resetTm();
 
@@ -458,8 +495,8 @@ export class APIClient {
 				yield this.#handleResp(parseExtra(x) as ServerResponse<T>);
 			}
 
-			if (abort.signal.reason instanceof TimeoutAbortError) {
-				throw new TimeoutAbortError();
+			if (abort.signal.reason instanceof AbortError) {
+				throw abort.signal.reason;
 			}
 		} finally {
 			disp.dispose();
@@ -474,7 +511,9 @@ export class APIClient {
 				for await (const x of this.#feedNoRetry(k, ...args)) yield x;
 				return;
 			} catch (e) {
-				if (e instanceof TimeoutAbortError) {
+				if (e instanceof AbortError) {
+					// aborted due to args abort signal
+					if (!e.timeout) return;
 					if (Date.now()-lastError > threshold) {
 						lastError = Date.now();
 						continue;
@@ -497,3 +536,5 @@ export class APIClient {
 		this.auth.onSessionChange?.(null);
 	}
 }
+
+export const forever = new Promise<never>(() => {});

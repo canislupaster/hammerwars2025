@@ -8,8 +8,9 @@ import sharp from "sharp";
 import z from "zod";
 import { randomShirtSeed } from "../shared/genshirt.ts";
 import { API, ContestProperties, DOMJudgeActiveContest, fill, getTeamLogoURL, logoMaxSize,
-	maxPromptLength, resumeMaxSize, screenshotMaxWidth, shirtSizes, TeamContestProperties, teamLimit,
-	UserInfo, validDiscordRe, validNameRe } from "../shared/util.ts";
+	maxFactLength, maxPromptLength, resumeMaxSize, screenshotMaxWidth, shirtSizes,
+	TeamContestProperties, teamLimit, UserInfo, validDiscordRe,
+	validNameRe } from "../shared/util.ts";
 import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getProperty,
 	propertiesChanged, PropertyChangeParam, setDb, setProperty, transaction, updateDb,
 	UserData } from "./db.ts";
@@ -17,6 +18,7 @@ import { domJudge } from "./domjudge.ts";
 import { makeVerificationEmail } from "./email.ts";
 import { auth, Context, env, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai,
 	rootUrl, sesClient } from "./main.ts";
+import { evalSolutions, presentation } from "./presentation.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
@@ -41,6 +43,41 @@ const partialUserInfoSchema = z.object({
 	shirtHue: z.number().min(0).max(360),
 	agreeRules: z.boolean(),
 });
+
+const presentationCountdownSchema = z.object({
+	type: z.literal("countdown"),
+	to: z.number(),
+	title: z.string(),
+});
+
+const presentationSubmissionsSchema = z.object({
+	type: z.literal("submissions"),
+	problems: z.array(
+		z.object({
+			label: z.string(),
+			solutions: z.array(
+				z.object({
+					title: z.string(),
+					summary: z.string(),
+					language: z.string(),
+					source: z.string(),
+					team: z.number(),
+				}),
+			),
+		}),
+	),
+	teamVerdicts: z.map(z.number(), z.map(z.string(), z.number())),
+});
+
+const presentationSchema = z.discriminatedUnion("type", [
+	z.object({
+		type: z.literal("duel"),
+		cfContestId: z.number(),
+		layout: z.enum(["left", "both", "right", "score"]),
+	}),
+	presentationCountdownSchema,
+	presentationSubmissionsSchema,
+]).or(z.null());
 
 export async function makeRoutes(app: Hono<HonoEnv>) {
 	const teamChanged = new EventEmitter<number>();
@@ -122,7 +159,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	}
 
 	makeRoute(app, "createAccount", {
-		validator: z.object({ id: z.number(), key: z.hex(), password: passwordSchema }),
+		validator: z.object({ id: z.number(), key: z.hex(), password: passwordSchema.nullable() }),
 		handler: async (c, req) => {
 			return await transaction(async trx => {
 				const row = await getDbCheck(trx, "emailVerification", req.id);
@@ -133,6 +170,11 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 				const prevUser = await trx.selectFrom("user").select("id").where("email", "=", row.email)
 					.executeTakeFirst();
+				if (req.password == null) {
+					if (prevUser == null) throw err("User doesn't exist");
+					await makeSession(c, trx, prevUser.id);
+					return;
+				}
 
 				let userId: number;
 				const passwordHash = await getKey(req.password);
@@ -311,6 +353,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	makeRoute(app, "setTeam", {
 		validator: z.object({
 			name: nameSchema,
+			funFact: z.string().min(1).max(maxFactLength).nullable(),
 			logo: z.object({ base64: z.base64(), mime: z.enum(["image/png", "image/jpeg"]) }).nullable()
 				.or(z.literal("remove")),
 		}),
@@ -322,13 +365,14 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				if (u == null) throw err("user does not exist");
 
 				let teamId: number;
+				const common = { name: req.name, funFact: req.funFact };
 				if (u.team != null) {
 					teamId = u.team;
-					await setDb(trx, "team", u.team, { name: req.name });
+					await setDb(trx, "team", u.team, common);
 				} else {
 					teamId = await setDb(trx, "team", null, {
 						joinCode: fill(10, () => randomInt(0, 9).toString()).join(""),
-						name: req.name,
+						...common,
 					});
 
 					await setDb(trx, "user", userId, { team: teamId });
@@ -410,6 +454,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					organizer: team != null && team == await getProperty(trx, "organizerTeamId"),
 					info: data.info,
 					submitted: data.submitted != null,
+					confirmedAttendance: data.confirmedAttendance != undefined && data.submitted != null,
 					lastEdited: data.lastEdited,
 					hasResume: resume != undefined,
 				};
@@ -425,6 +470,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 						...data2,
 						team: {
 							id: team,
+							funFact: teamData.funFact,
 							logo: logo != null ? getTeamLogoURL(logo.id) : null,
 							joinCode: teamData.joinCode,
 							name: teamData.name,
@@ -439,6 +485,20 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				}
 
 				return { ...data2, team: null };
+			});
+		},
+	});
+
+	makeRoute(app, "confirmAttendance", {
+		async handler(c) {
+			const userId = await auth(c);
+			await transaction(trx => {
+				return updateDb(
+					trx,
+					"user",
+					userId,
+					async old => ({ ...old, data: { ...old.data, confirmedAttendance: Date.now() } }),
+				);
 			});
 		},
 	});
@@ -479,6 +539,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				screenshotsEnabled: z.boolean(),
 				visibleDirectories: z.string().array(),
 			}),
+			presentation: presentationSchema,
 		}).partial().strip(),
 		async handler(c, req) {
 			await keyAuth(c, true);
@@ -833,6 +894,30 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		async handler(c, { id }) {
 			await keyAuth(c, false);
 			return await transaction(trx => toAdminTeam(trx, id));
+		},
+	});
+
+	makeRoute(app, "presentation", {
+		feed: true,
+		handler: async function* handler(signal) {
+			while (!signal.aborted) {
+				yield presentation.state.v;
+				await presentation.state.change.wait(signal);
+			}
+		},
+	});
+
+	makeRoute(app, "getPreFreezeSolutions", {
+		validator: z.object({ label: z.string(), intendedSolution: z.string() }).array(),
+		async handler(c, req) {
+			await keyAuth(c, true);
+			const [subs, verdicts] = await domJudge.getPreFreezeSolutions();
+			const problems = await Promise.all(
+				Map.groupBy(subs, k => k.problem).entries().map(async ([label, subs]) => {
+					return { label, solutions: await evalSolutions(subs, req) };
+				}),
+			);
+			return { problems, teamVerdicts: verdicts };
 		},
 	});
 }

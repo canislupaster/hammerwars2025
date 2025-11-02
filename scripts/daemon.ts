@@ -8,13 +8,12 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
 import { Canvas, FontLibrary, loadImage, loadImageData } from "skia-canvas";
-import { APIClient, delay, DOMJudgeActiveContest, parseExtra,
+import { APIClient, delay, DOMJudgeActiveContest, forever, parseExtra,
 	stringifyExtra } from "../shared/util";
 
 console.log(`daemon started in ${process.cwd()}`);
 
 const updater = new Set<(old: Data) => void>();
-const forever = new Promise<never>(() => {});
 type RegisterParams = ["bg", string, () => Promise<void>] | [
 	"update",
 	string,
