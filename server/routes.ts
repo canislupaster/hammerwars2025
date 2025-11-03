@@ -9,7 +9,7 @@ import z from "zod";
 import { randomShirtSeed } from "../shared/genshirt.ts";
 import { API, ContestProperties, DOMJudgeActiveContest, fill, getTeamLogoURL, logoMaxSize,
 	maxFactLength, maxPromptLength, resumeMaxSize, screenshotMaxWidth, shirtSizes,
-	TeamContestProperties, teamLimit, UserInfo, validDiscordRe,
+	TeamContestProperties, teamLimit, UserInfo, validDiscordRe, validFullNameRe,
 	validNameRe } from "../shared/util.ts";
 import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getProperty,
 	propertiesChanged, PropertyChangeParam, setDb, setProperty, transaction, updateDb,
@@ -22,6 +22,7 @@ import { evalSolutions, presentation } from "./presentation.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
+const fullNameSchema = z.string().regex(new RegExp(validFullNameRe, "u"));
 const inPersonSchema = z.object({
 	dinner: z.enum(["cheese", "pepperoni", "sausage", "none"]),
 	lunch: z.enum(["ham", "turkey", "tuna", "veggie", "none"]),
@@ -29,14 +30,14 @@ const inPersonSchema = z.object({
 });
 const discordSchema = z.string().regex(new RegExp(validDiscordRe));
 const userInfoSchema = z.object({
-	name: nameSchema,
+	name: fullNameSchema,
 	discord: discordSchema.nullable(),
 	inPerson: inPersonSchema.nullable(),
 	shirtSeed: z.int32(),
 	shirtHue: z.number().min(0).max(360),
 });
 const partialUserInfoSchema = z.object({
-	name: nameSchema.optional(),
+	name: fullNameSchema.optional(),
 	discord: discordSchema.nullable(),
 	inPerson: inPersonSchema.partial().nullable(),
 	shirtSeed: z.int32(),
@@ -69,15 +70,20 @@ const presentationSubmissionsSchema = z.object({
 	teamVerdicts: z.map(z.number(), z.map(z.string(), z.number())),
 });
 
-const presentationSchema = z.discriminatedUnion("type", [
-	z.object({
-		type: z.literal("duel"),
-		cfContestId: z.number(),
-		layout: z.enum(["left", "both", "right", "score"]),
-	}),
-	presentationCountdownSchema,
-	presentationSubmissionsSchema,
-]).or(z.null());
+const presentationSchema = z.object({
+	queue: z.union([
+		z.object({
+			type: z.literal("duel"),
+			cfContestId: z.number(),
+			layout: z.enum(["left", "both", "right", "score"]),
+		}),
+		presentationCountdownSchema,
+		presentationSubmissionsSchema,
+		z.object({ type: z.literal("image"), src: z.string() }),
+		z.object({ type: z.literal("video"), src: z.string() }),
+	]).array(),
+	current: z.int(),
+});
 
 export async function makeRoutes(app: Hono<HonoEnv>) {
 	const teamChanged = new EventEmitter<number>();
@@ -623,6 +629,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					out.users.push({
 						id,
 						email: udata.email,
+						lastEdited: udata.data.lastEdited,
 						data: udata.data.submitted,
 						team: udata.team,
 						resumeId: resume?.id ?? null,
@@ -904,6 +911,14 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				yield presentation.state.v;
 				await presentation.state.change.wait(signal);
 			}
+		},
+	});
+
+	makeRoute(app, "getPresentationQueue", {
+		async handler(c) {
+			await keyAuth(c, true);
+			return await transaction(trx => getProperty(trx, "presentation"))
+				?? { queue: [], current: 0 };
 		},
 	});
 

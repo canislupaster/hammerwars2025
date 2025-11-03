@@ -1,10 +1,12 @@
+import { ComponentChildren } from "preact";
 import { useCallback, useEffect, useId, useRef, useState } from "preact/hooks";
 import { twJoin } from "tailwind-merge";
 import { add, add3, mul, mul3, rot, V2, V3 } from "../../shared/geo";
-import { fill, forever, PresentationState } from "../../shared/util";
-import { apiClient } from "./clientutil";
+import { badHash, delay, fill, PresentationState, Scoreboard } from "../../shared/util";
+import { apiBaseUrl, apiClient } from "./clientutil";
 import { Pattern3, PatternBg } from "./home";
-import { Countdown, Loading, Text, useAsync, useTimeUntil } from "./ui";
+import { chipColorKeys, chipColors, Countdown, Divider, Loading, Text, useAsync,
+	useTimeUntil } from "./ui";
 
 function usePresentationTransition(
 	{ start, hold, onDone }: { start: number; hold?: boolean; onDone: () => void },
@@ -52,8 +54,8 @@ function usePresentationTransition(
 			const sc = 1-Math.pow(s-0.5, 2)*4;
 
 			const svg = fromMsk.parentNode! as SVGSVGElement;
-			const nx = Math.ceil(svg.clientWidth/sz)+1;
-			const ny = Math.ceil(svg.clientHeight/sz)+1;
+			const nx = Math.ceil(svg.clientWidth/sz)+2;
+			const ny = Math.ceil(svg.clientHeight/sz)+2;
 
 			const pathI = new Map(els.map(v => [v, { c: 0 }]));
 			for (let i = 0; i < ny; i++) {
@@ -130,15 +132,48 @@ function usePresentationTransition(
 	return ref;
 }
 
-type Slide = { noTransition?: boolean } & (PresentationState & { type: "countdown" | "none" });
+type Slide = Readonly<
+	& { noTransition?: boolean }
+	& (PresentationState & { type: "countdown" | "none" | "image" | "video" } | {
+		type: "submission";
+		scoreboard: Scoreboard;
+		problemLabel: string;
+		data: Readonly<
+			(PresentationState & { type: "submissions" })["problems"][number]["solutions"][number]
+		>;
+	})
+>;
 
 async function controlPresentation(
 	state: PresentationState,
 	setSlide: (s: Slide) => void,
-	_abort: AbortSignal,
+	abort: AbortSignal,
 ) {
-	if (state.type == "countdown") setSlide(state);
-	await forever;
+	if (
+		state.type == "countdown" || state.type == "image" || state.type == "video"
+		|| state.type == "none"
+	) {
+		setSlide(state);
+	} else if (state.type == "submissions") {
+		const abort2 = new AbortController();
+		const { value: scoreboard } = await apiClient.feed("scoreboard", abort2.signal).next();
+		abort2.abort();
+		if (!scoreboard) throw new Error("expected scoreboard");
+
+		const slides = state.problems.flatMap(prob =>
+			prob.solutions.map(
+				sol => ({ data: sol, problemLabel: prob.label, scoreboard, type: "submission" } as const)
+			)
+		);
+
+		let i = 0;
+		while (!abort.aborted) {
+			const slide = slides[(i++)%slides.length];
+			setSlide(slide);
+			await delay(20_000);
+		}
+	}
+	await new Promise(res => abort.addEventListener("abort", res));
 }
 
 function PresentationCountdown({ slide }: { slide: Slide & { type: "countdown" } }) {
@@ -152,12 +187,42 @@ function PresentationCountdown({ slide }: { slide: Slide & { type: "countdown" }
 	</div>;
 }
 
+function SubmissionSlide({ slide }: { slide: Slide & { type: "submission" } }) {
+	const probName = slide.scoreboard.problemNames.get(slide.problemLabel);
+	const team = slide.scoreboard.teams.get(slide.data.team);
+	const langColor = chipColors[chipColorKeys[badHash(slide.data.language)%chipColorKeys.length]];
+	return <div className="flex flex-col gap-1 h-full w-full max-w-5xl">
+		<div className="flex flex-row justify-between items-baseline">
+			<Text v="big">{slide.problemLabel}. {probName}</Text>
+			<div className="flex flex-row gap-3 items-baseline">
+				<Text v="md" className="animate-flip-in" key={slide.data.title}>{slide.data.title}</Text>
+				<Text className={twJoin("px-2 py-1 rounded-md", langColor)} v="bold">
+					{slide.data.language}
+				</Text>
+			</div>
+		</div>
+		{team && <div className="flex flex-row items-center justify-end max-h-20 py-2 gap-4">
+			<div className="flex flex-col">
+				<Text v="bold">by {team.name}</Text>
+				<Text v="smbold">{team.members.join(", ")}</Text>
+			</div>
+			{team.logo != null
+				&& <img className="h-full animate-fade-in" src={new URL(team.logo, apiBaseUrl).href} />}
+		</div>}
+		<Divider />
+		<Text>{slide.data.summary}</Text>
+	</div>;
+}
+
 function PresentationSlide({ slide }: { slide: Slide }) {
-	if (slide.type == "none") return <Text v="md">Please wait...</Text>;
-	else if (slide.type == "countdown") {
-		return <PresentationCountdown slide={slide} />;
-	}
-	slide satisfies never;
+	let inner: ComponentChildren;
+	if (slide.type == "none") inner = <Text v="md">Please wait...</Text>;
+	else if (slide.type == "countdown") inner = <PresentationCountdown slide={slide} />;
+	else if (slide.type == "submission") inner = <SubmissionSlide slide={slide} />;
+	else if (slide.type == "image") inner = <img src={slide.src} className="max-w-full max-h-full" />;
+	else if (slide.type == "video") inner = <video src={slide.src} autoPlay />;
+	else return slide satisfies never;
+	return <div className="flex flex-col items-center justify-center w-full h-full">{inner}</div>;
 }
 
 export default function Presentation() {
@@ -219,13 +284,13 @@ export default function Presentation() {
 	}, [fun]);
 
 	return <div className="flex flex-col gap-8 h-dvh justify-center items-center">
-		<h1 className="text-5xl flex flex-row">
+		<h1 className="text-5xl flex flex-row drop-shadow-lg/100 drop-shadow-black z-10">
 			<span>HAMMERWARS</span>
 			<span className="font-black">2025</span>
 			{/* <span className="inline-block w-[100px] shrink-0" /> */}
 			{/* <span className="ml-auto"></span> */}
 		</h1>
-		<div className="relative w-[90vw] h-[80vh]">
+		<div className="relative w-[90vw] h-[80vh] bg-black/70 shadow-[0_0_50px_50px] shadow-black/70">
 			{slides[1].length == 0
 				? <Loading />
 				: <div key={slides[0]}

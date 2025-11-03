@@ -6,14 +6,18 @@ import { openai } from "./main";
 async function getPresentationState(
 	prop: ContestProperties["presentation"],
 ): Promise<PresentationState> {
-	if (prop == null) {
+	const cur = prop.queue[prop.current];
+	if (cur == null) {
 		return { type: "none" };
-	} else if (prop.type == "countdown" || prop.type == "submissions") {
-		return prop;
-	} else if (prop.type == "duel") {
+	} else if (
+		cur.type == "countdown" || cur.type == "submissions" || cur.type == "image"
+		|| cur.type == "video"
+	) {
+		return cur;
+	} else if (cur.type == "duel") {
 		throw new Error("unsupported");
 	}
-	return prop satisfies never;
+	return cur satisfies never;
 }
 
 export async function evalSolutionQuality(
@@ -80,7 +84,7 @@ export async function evalSolutions(
 	subs: Awaited<ReturnType<typeof domJudge.getPreFreezeSolutions>>[0],
 	intendedSolutions: { label: string; intendedSolution: string }[],
 ) {
-	const categories = ["fastest", "cleanest", "slowest", "longest", "shortest"] as const;
+	const categories = ["fastest", "cleanest", "slowest", "longest", "shortest", "first"] as const;
 	const toIntendedSolution = new Map(intendedSolutions.map(v => [v.label, v.intendedSolution]));
 
 	return await Promise.all(categories.map(async cat => {
@@ -93,6 +97,9 @@ export async function evalSolutions(
 			} else if (cat == "cleanest") {
 				const intended = toIntendedSolution.get(sub.problem) ?? null;
 				score = await evalSolutionQuality(sub.source, intended);
+			} else if (cat == "first") {
+				score = -sub.contestTime;
+				value = `${Math.floor(sub.contestTime/1000/60)} minutes`;
 			} else if (cat == "shortest" || cat == "longest") {
 				score = (cat == "shortest" ? -1 : 1)*sub.source.length;
 				value = `${sub.source.length} characters`;
@@ -121,7 +128,10 @@ export async function evalSolutions(
 class Presentation {
 	state = new Mutable<PresentationState>({ type: "none" });
 	async #loop() {
-		let last = await transaction(trx => getProperty(trx, "presentation")), changed = true;
+		let last = await transaction(async trx =>
+			await getProperty(trx, "presentation") ?? { queue: [], current: 0 }
+		);
+		let changed = true;
 		propertiesChanged.on(c => {
 			if (c.k == "presentation") {
 				last = c.v;

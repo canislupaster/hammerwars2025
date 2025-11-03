@@ -7,7 +7,7 @@ import { APIError, maxFactLength } from "../../shared/util";
 import { LocalStorage, useRequest } from "./clientutil";
 import { Home } from "./home";
 import { Alert, Anchor, bgColor, Button, Card, Container, Divider, GotoContext, Input, Loading,
-	Text, Textarea, ThemeContext, useGoto, useTitle, useValidity } from "./ui";
+	Text, Textarea, ThemeContext, useGoto, useTitle } from "./ui";
 
 export function Footer() {
 	return <div className="flex flex-col items-center w-full py-5 px-5">
@@ -313,6 +313,7 @@ function ConfirmAttendance() {
 
 const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.default));
 const LazyPresentationPage = lazy(() => import("./presentation").then(v => v.default));
+const LazyClickerPage = lazy(() => import("./clicker").then(v => v.default));
 
 const NotFound = () =>
 	<ErrorPage errName="Not found">
@@ -362,6 +363,7 @@ function InnerApp() {
 		<Route path="/verify" component={VerifyPage} />
 		<Route path="/scoreboard" component={LazyScoreboardPage} />
 		<Route path="/presentation" component={LazyPresentationPage} />
+		<Route path="/clicker" component={LazyClickerPage} />
 		<Route default component={NotFound} />
 	</Router>;
 }

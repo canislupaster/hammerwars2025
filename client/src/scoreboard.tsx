@@ -5,7 +5,7 @@ import { Dispatch, StateUpdater, useCallback, useEffect, useMemo, useRef,
 import { twJoin, twMerge } from "tailwind-merge";
 import { cmpTeamRankId, ContestProperties, fill, Scoreboard, ScoreboardLastSubmission,
 	ScoreboardTeam, throttle } from "../../shared/util";
-import { apiKeyClient, LocalStorage, useFeed } from "./clientutil";
+import { apiBaseUrl, apiKeyClient, LocalStorage, useFeed } from "./clientutil";
 import { Pattern2, PatternBg } from "./home";
 import { Button, chipColorKeys, chipTextColors, Countdown, Divider, ease, Input, Loading, Modal, px,
 	Text, ThemeSpinner, useAsync, useDisposable, useShortcuts, useTimeUntil } from "./ui";
@@ -499,7 +499,8 @@ function SolveAnnouncement(
 
 		<div className="absolute -z-10 left-0 top-0 right-0 bottom-0 animate-fade-in bg-black/30 blur-2xl" />
 
-		{team.logo != null && <img className="h-2/3 animate-fade-in" src={team.logo} />}
+		{team.logo != null
+			&& <img className="h-2/3 animate-fade-in" src={new URL(team.logo, apiBaseUrl).href} />}
 		<Text v="md" className={twJoin(!newSolve && "animate-shrink ease-in text-2xl")}>
 			<span className="text-sky-300">{team.name}</span> {solve.sub.ac == false
 				? <>
@@ -829,7 +830,8 @@ function ScoreboardInner(
 						<div className={twJoin(leftRowCls(i, focus, id, "l"), "pl-2 pr-0")} key={id}
 							data-id={id}>
 							<TeamRank rank={team.rank} resolved={i >= firstResolved} />
-							{team.logo != null && <img className="h-15 -mr-1" src={team.logo} />}
+							{team.logo != null
+								&& <img className="h-15 -mr-1" src={new URL(team.logo, apiBaseUrl).href} />}
 							<Scroller data={namesHoriz} off={i/Math.max(1, sorted.length-1)}
 								className="whitespace-nowrap h-full flex items-center">
 								{team.name}

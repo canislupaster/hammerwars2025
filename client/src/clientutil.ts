@@ -55,8 +55,9 @@ type CurrentRequest<T extends keyof API, Throw extends boolean> = {
 } | { current: null; request: null };
 
 export function useRequest<T extends keyof NonFeedAPI, Throw extends boolean = true>(
-	{ route, initRequest, handler, throw: doThrow }: {
+	{ route, initRequest, handler, throw: doThrow, client }: {
 		route: T;
+		client?: APIClient;
 		initRequest?: API[T] extends { request: unknown } ? API[T]["request"] : true;
 		handler?: (resp: NonNullable<CurrentRequest<T, Throw>["current"]>) => void;
 		throw?: Throw;
@@ -84,7 +85,7 @@ export function useRequest<T extends keyof NonFeedAPI, Throw extends boolean = t
 			T,
 			Throw
 		>["request"];
-		apiClient.request<T>(route, ...params).then(v => {
+		(client ?? apiClient).request<T>(route, ...params).then(v => {
 			const current: ServerResponse<T> & { type: "ok" } = { type: "ok", data: v };
 			setCurrent({ current, request });
 			handlerRef.current?.(current);
@@ -110,7 +111,7 @@ export function useRequest<T extends keyof NonFeedAPI, Throw extends boolean = t
 				setErr(err);
 			}
 		}).finally(() => setLoading(i => i-1));
-	}, [doThrow, route]);
+	}, [client, doThrow, route]);
 	useEffect(() => {
 		if (initRequest != undefined) {
 			call(...(initRequest == true ? [] : [initRequest]) as APIRequest<T>);

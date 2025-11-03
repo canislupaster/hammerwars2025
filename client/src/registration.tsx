@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { twJoin } from "tailwind-merge";
 import { maxShirtSeed, randomShirtSeed } from "../../shared/genshirt";
 import { API, debounce, joinCodeRe, logoMaxSize, logoMimeTypes, maxPromptLength, PartialUserInfo,
-	resumeMaxSize, shirtSizes, teamLimit, UserInfo, validDiscordRe,
+	resumeMaxSize, shirtSizes, teamLimit, UserInfo, validDiscordRe, validFullNameRe,
 	validNameRe } from "../../shared/util";
 import { apiBaseUrl, apiClient, useRequest } from "./clientutil";
 import type { GenShirtMessage, GenShirtResponse } from "./genshirtworker";
@@ -348,7 +348,7 @@ export default function RegistrationEditor() {
 				<div className={"flex flex-col gap-3 max-w-xl items-stretch relative"}
 					inert={loading || data.submitted}>
 					<Text v="md" className="-mb-2">Your name</Text>
-					<Input pattern={validNameRe} value={userInfo.name ?? ""}
+					<Input pattern={validFullNameRe} value={userInfo.name ?? ""}
 						valueChange={v => modInfo("name", v == "" ? undefined : v)} />
 					{makeMissingAlert("name", "Name")}
 

@@ -103,6 +103,7 @@ export function parseExtra(str: string | null): unknown {
 }
 
 export const validNameRe = "^[A-Za-z0-9 _\\-]{2,30}$";
+export const validFullNameRe = "^(?! )[ \\x21-\\x7E\\p{L}\\p{M}\\p{N}\\p{P}]{2,50}(?<! )$";
 export const validDiscordRe = "^[A-Za-z0-9._]{2,32}$";
 export const maxFactLength = 300;
 export const joinCodeRe = "^\\d{10}$";
@@ -136,8 +137,8 @@ export type TeamContestProperties = {
 	visibleDirectories: string[];
 };
 
-export type PresentationState = { type: "none" } | { type: "countdown"; to: number; title: string }
-	| {
+export type PresentationState = Readonly<
+	{ type: "none" } | { type: "countdown"; to: number; title: string } | {
 		type: "submissions";
 		problems: {
 			label: string;
@@ -150,7 +151,8 @@ export type PresentationState = { type: "none" } | { type: "countdown"; to: numb
 			}[];
 		}[];
 		teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
-	};
+	} | { type: "image"; src: string } | { type: "video"; src: string }
+>;
 
 export type SubmissionRankings = {
 	problems: {
@@ -184,8 +186,12 @@ export type ContestProperties = {
 	focusTeamId: number | null;
 	team: TeamContestProperties;
 	organizerTeamId: number | null;
-	presentation: { type: "duel"; cfContestId: number; layout: "left" | "both" | "right" | "score" }
-		| PresentationState & { type: "countdown" | "submissions" } | null;
+	presentation: {
+		queue:
+			({ type: "duel"; cfContestId: number; layout: "left" | "both" | "right" | "score" }
+				| PresentationState & { type: "countdown" | "submissions" | "image" | "video" })[];
+		current: number;
+	};
 };
 
 export type Session = { id: number; key: string };
@@ -260,6 +266,7 @@ export type AdminTeamData = {
 export type AdminUserData = {
 	id: number;
 	email: string;
+	lastEdited: number;
 	data: UserInfo | null;
 	team: number | null;
 	resumeId: number | null;
@@ -315,7 +322,9 @@ export type API = {
 	getResumeId: { request: { id: number }; response: { base64: string } };
 	getTeamLogo: { request: { id: number }; response: { base64: string; mime: string } };
 	allData: { response: { users: AdminUserData[]; teams: AdminTeamData[] } };
-	setUsers: { request: (Omit<AdminUserData, "resumeId"> | { id: number; delete: true })[] };
+	setUsers: {
+		request: (Omit<AdminUserData, "resumeId" | "lastEdited"> | { id: number; delete: true })[];
+	};
 	setTeams: { request: (Omit<AdminTeamData, "logoId"> | { id: number; delete: true })[] };
 	teamInfo: { request: { id: number }; response: AdminTeamData };
 	teamFeed: {
@@ -342,6 +351,7 @@ export type API = {
 		request: { label: string; intendedSolution: string }[];
 		response: SubmissionRankings;
 	};
+	getPresentationQueue: { response: ContestProperties["presentation"] };
 };
 
 export type ServerResponse<K extends keyof API> = { type: "error"; error: APIErrorObject } | {
@@ -537,4 +547,6 @@ export class APIClient {
 	}
 }
 
+export const badHash = (s: string) =>
+	[...s].map((x, i) => (x.charCodeAt(0)*13+17*i)%7).reduce((a, b) => a+b, 0);
 export const forever = new Promise<never>(() => {});
