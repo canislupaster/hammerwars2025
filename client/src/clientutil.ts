@@ -164,3 +164,5 @@ export function useFeed<T extends keyof FeedAPI>(
 		if (signal != null && !async.attempted) async.run();
 	}, [async, signal]);
 }
+
+export const simp = (x: string) => x.toLowerCase().replace(/[^a-z0-9\n]/g, "");

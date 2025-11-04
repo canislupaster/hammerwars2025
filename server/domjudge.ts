@@ -57,9 +57,9 @@ type DOMJudgeData = {
 	accounts: Map<string, Account>;
 	lastUpdate: string | null;
 	domJudgeIdToId: Map<string, number>;
-	isActive: boolean;
 	doUpdateTeams: boolean;
 	resolveIndex: ContestProperties["resolveIndex"];
+	lastJudgementByProblemTeam: Map<string, Map<number, string>>;
 };
 
 const makeDomJudgeData = (): DOMJudgeData => ({
@@ -70,10 +70,10 @@ const makeDomJudgeData = (): DOMJudgeData => ({
 	teams: new Map<string, Team>(),
 	accounts: new Map<string, Account>(),
 	domJudgeIdToId: new Map<string, number>(),
-	isActive: false,
 	lastUpdate: null,
 	doUpdateTeams: false,
 	resolveIndex: null,
+	lastJudgementByProblemTeam: new Map(),
 });
 
 const defaultScoreboard: Scoreboard = {
@@ -125,6 +125,8 @@ export class DOMJudge extends DisposableStack {
 	}
 
 	#updateJudgements(scoreboard: Scoreboard): Scoreboard {
+		this.#data.lastJudgementByProblemTeam.clear();
+
 		type MutTeam = Omit<ScoreboardTeam, "problems"> & {
 			problems: Map<string, ScoreboardLastSubmission>;
 			penaltyMinutes: number;
@@ -152,6 +154,7 @@ export class DOMJudge extends DisposableStack {
 			return {
 				teamId: id,
 				prob,
+				id: j.id,
 				time: Date.parse(sub.time),
 				ac: j.judgement_type_id == null ? null : (j.judgement_type_id == "AC"),
 				verdict: j.judgement_type_id,
@@ -168,6 +171,16 @@ export class DOMJudge extends DisposableStack {
 		const problemsFirstSolved = new Set<string>();
 		const applyJudgement = (team: MutTeam, judgement: J) => {
 			const old = team.problems.get(judgement.prob.label);
+
+			if (old?.ac != true || (old?.ac == true && judgement.ac == true)) {
+				let m = this.#data.lastJudgementByProblemTeam.get(judgement.prob.label);
+				if (m == null) {
+					m = new Map();
+					this.#data.lastJudgementByProblemTeam.set(judgement.prob.label, m);
+				}
+				m.set(judgement.teamId, judgement.id);
+			}
+
 			if (old?.ac == true) return null;
 
 			const incorrect = (old?.incorrect ?? 0)+(judgement.ac == false ? 1 : 0);
@@ -461,6 +474,13 @@ export class DOMJudge extends DisposableStack {
 		}
 	}
 
+	async #getSubmissionSource(id: string) {
+		return (await (await this.domJudgeApi(`submissions/${id}/source-code`)).json() as {
+			filename: string;
+			source: string;
+		}[]).map(v => ({ ...v, source: Buffer.from(v.source, "base64").toString("utf-8") }));
+	}
+
 	async getPreFreezeSolutions() {
 		const verdicts = new Map<number, Map<string, number>>();
 		const subJudgements = Map.groupBy(this.#data.judgements.values(), j => j.submission_id);
@@ -489,11 +509,7 @@ export class DOMJudge extends DisposableStack {
 				|| (freeze != null && Date.parse(v.time) >= freeze)
 			) continue;
 
-			const code = await (await this.domJudgeApi(`submissions/${v.id}/source-code`)).json() as {
-				filename: string;
-				source: string;
-			}[];
-
+			const code = await this.#getSubmissionSource(v.id);
 			if (code.length == 0) continue;
 
 			if (judgement.judgement_type_id != null) {
@@ -511,9 +527,9 @@ export class DOMJudge extends DisposableStack {
 						team,
 						problem: prob.label,
 						tl: prob.time_limit,
+						source: code[0].source,
 						name: code[0].filename,
 						languageName: lang.name,
-						source: Buffer.from(code[0].source, "base64").toString("utf-8"),
 						contestTime,
 						runtime: judgement.max_run_time ?? null,
 					});
@@ -523,6 +539,24 @@ export class DOMJudge extends DisposableStack {
 		}
 
 		return [[...byTeamProblem.values().flatMap(v => v.values())], verdicts] as const;
+	}
+
+	async getPublicSubmissionSource(team: number, problemLabel: string) {
+		const judgeId = this.#data.lastJudgementByProblemTeam.get(problemLabel)?.get(team);
+		const judgement = this.#data.judgements.get(judgeId ?? "");
+		const langId = this.#data.submission.get(judgement?.submission_id ?? "")?.language_id;
+		if (
+			judgeId == null || judgement == null || langId == null || this.scoreboard.v.endTimeMs == null
+			|| Date.now() <= this.scoreboard.v.endTimeMs
+		) {
+			throw new Error("Submission does not exist");
+		}
+		const language = this.#data.languages.get(langId)?.name;
+		const res = await this.#getSubmissionSource(judgement.submission_id);
+		if (res.length == 0 || language == null) {
+			throw new Error("No source or language found for submission");
+		}
+		return { ...res[0], language, runtime: judgement.max_run_time ?? null };
 	}
 
 	start() {

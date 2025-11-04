@@ -3,6 +3,7 @@ import { IconMail } from "@tabler/icons-preact";
 import { ComponentChildren, render } from "preact";
 import { lazy, LocationProvider, Route, Router, useLocation } from "preact-iso";
 import { useCallback, useEffect, useErrorBoundary, useMemo, useRef, useState } from "preact/hooks";
+import { twMerge } from "tailwind-merge";
 import { APIError, maxFactLength } from "../../shared/util";
 import { LocalStorage, useRequest } from "./clientutil";
 import { Home } from "./home";
@@ -20,7 +21,9 @@ export function Footer() {
 	</div>;
 }
 
-export function MainContainer({ children }: { children?: ComponentChildren }) {
+export function MainContainer(
+	{ children, className }: { children?: ComponentChildren; className?: string },
+) {
 	const goto = useGoto();
 	return <>
 		<div className="flex flex-row mt-10 relative cursor-pointer" onClick={() => {
@@ -32,7 +35,13 @@ export function MainContainer({ children }: { children?: ComponentChildren }) {
 				<span className="block font-black anim-delay animate-flip-in">2025</span>
 			</h1>
 		</div>
-		<div className="my-5 max-w-xl w-full flex flex-col items-center gap-3 p-1 px-2">{children}</div>
+		<div
+			className={twMerge(
+				"my-5 max-w-xl w-full flex flex-col items-center gap-3 p-1 px-2",
+				className,
+			)}>
+			{children}
+		</div>
 		<Footer />
 	</>;
 }
@@ -156,7 +165,7 @@ function VerifyPage() {
 	</MainContainer>;
 }
 
-function ErrorPage(
+export function ErrorPage(
 	{ errName, err, reset, children }: {
 		errName?: string;
 		err?: unknown;
@@ -237,7 +246,7 @@ function ConfirmAttendanceInner() {
 	}, [d]);
 
 	if (unsubmitReq.loading || confirmReq.loading || info.loading || d == null) return <Loading />;
-	const r = d?.data.submitted == false
+	const r = d?.data.submitted == false || d?.data.info.inPerson == null
 		? "cancelled"
 		: info.current.data.confirmedAttendance
 		? "confirmed"
@@ -280,6 +289,11 @@ function ConfirmAttendanceInner() {
 			</Text>
 			<Textarea value={funFact} onInput={ev => setFunFact(ev.currentTarget.value)} minLength={0}
 				maxLength={maxFactLength} />
+			<Text>Template code</Text>
+			<Text className="-mt-2" v="dim">
+				You'll have time during the practice contest to download whatever you want with full
+				internet access, but you can upload code now and avoid the pain of transferring files
+			</Text>
 		</>}
 		<div className="flex flex-row gap-2">
 			<Button className={bgColor.md} name="confirm">Confirm</Button>
@@ -314,6 +328,7 @@ function ConfirmAttendance() {
 const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.default));
 const LazyPresentationPage = lazy(() => import("./presentation").then(v => v.default));
 const LazyClickerPage = lazy(() => import("./clicker").then(v => v.default));
+const LazySubmissionsPage = lazy(() => import("./submissions").then(v => v.default));
 
 const NotFound = () =>
 	<ErrorPage errName="Not found">
@@ -364,6 +379,9 @@ function InnerApp() {
 		<Route path="/scoreboard" component={LazyScoreboardPage} />
 		<Route path="/presentation" component={LazyPresentationPage} />
 		<Route path="/clicker" component={LazyClickerPage} />
+		<Route path="/submissions" component={LazySubmissionsPage} />
+		<Route path="/submissions/:problem" component={LazySubmissionsPage} />
+		<Route path="/submissions/:problem/:team" component={LazySubmissionsPage} />
 		<Route default component={NotFound} />
 	</Router>;
 }

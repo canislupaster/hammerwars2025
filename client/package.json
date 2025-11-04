@@ -12,6 +12,7 @@
   "dependencies": {
     "@tabler/icons-preact": "^3",
     "disposablestack": "^1",
+    "highlight.js": "^11.11.1",
     "preact": "11.0.0-beta.0",
     "preact-iso": "^2",
     "react-tiny-popover": "^8",

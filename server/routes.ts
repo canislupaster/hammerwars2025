@@ -70,17 +70,21 @@ const presentationSubmissionsSchema = z.object({
 	teamVerdicts: z.map(z.number(), z.map(z.string(), z.number())),
 });
 
+const presentationDuelSchema = z.object({
+	type: z.literal("duel"),
+	cfContestId: z.number(),
+	layout: z.enum(["left", "both", "right", "score"]),
+	players: z.array(z.object({ name: z.string(), cf: z.string(), src: z.string().optional() })),
+});
+
 const presentationSchema = z.object({
 	queue: z.union([
-		z.object({
-			type: z.literal("duel"),
-			cfContestId: z.number(),
-			layout: z.enum(["left", "both", "right", "score"]),
-		}),
+		presentationDuelSchema,
 		presentationCountdownSchema,
 		presentationSubmissionsSchema,
 		z.object({ type: z.literal("image"), src: z.string() }),
-		z.object({ type: z.literal("video"), src: z.string() }),
+		z.object({ type: z.literal("video"), src: z.string(), logo: z.string().optional() }),
+		z.object({ type: z.literal("scoreboard") }),
 	]).array(),
 	current: z.int(),
 });
@@ -736,6 +740,12 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		},
 	});
 
+	makeRoute(app, "getScoreboard", {
+		async handler() {
+			return domJudge.scoreboard.v;
+		},
+	});
+
 	makeRoute(app, "scoreboard", {
 		feed: true,
 		handler: async function* handler(abort) {
@@ -927,12 +937,21 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		async handler(c, req) {
 			await keyAuth(c, true);
 			const [subs, verdicts] = await domJudge.getPreFreezeSolutions();
-			const problems = await Promise.all(
+			const problems = (await Promise.all(
 				Map.groupBy(subs, k => k.problem).entries().map(async ([label, subs]) => {
 					return { label, solutions: await evalSolutions(subs, req) };
 				}),
+			)).sort((a, b) =>
+				a.label < b.label ? -1 : 1
 			);
 			return { problems, teamVerdicts: verdicts };
+		},
+	});
+
+	makeRoute(app, "getSubmission", {
+		validator: z.object({ team: z.int(), problem: z.string() }),
+		async handler(_, { team, problem }) {
+			return await domJudge.getPublicSubmissionSource(team, problem);
 		},
 	});
 }

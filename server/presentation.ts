@@ -11,7 +11,7 @@ async function getPresentationState(
 		return { type: "none" };
 	} else if (
 		cur.type == "countdown" || cur.type == "submissions" || cur.type == "image"
-		|| cur.type == "video"
+		|| cur.type == "video" || cur.type == "scoreboard"
 	) {
 		return cur;
 	} else if (cur.type == "duel") {
@@ -102,7 +102,7 @@ export async function evalSolutions(
 				value = `${Math.floor(sub.contestTime/1000/60)} minutes`;
 			} else if (cat == "shortest" || cat == "longest") {
 				score = (cat == "shortest" ? -1 : 1)*sub.source.length;
-				value = `${sub.source.length} characters`;
+				value = `${(sub.source.length/1e3).toFixed(2)}k characters`;
 			} else {
 				return cat satisfies never;
 			}

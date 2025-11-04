@@ -1,12 +1,15 @@
 import { ComponentChildren } from "preact";
-import { useCallback, useEffect, useId, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "preact/hooks";
 import { twJoin } from "tailwind-merge";
+
 import { add, add3, mul, mul3, rot, V2, V3 } from "../../shared/geo";
 import { badHash, delay, fill, PresentationState, Scoreboard } from "../../shared/util";
 import { apiBaseUrl, apiClient } from "./clientutil";
+import { CodeBlock } from "./code";
 import { Pattern3, PatternBg } from "./home";
-import { chipColorKeys, chipColors, Countdown, Divider, Loading, Text, useAsync,
-	useTimeUntil } from "./ui";
+import ScoreboardPage from "./scoreboard";
+import { Scroller, useScroll } from "./scroller";
+import { chipColorKeys, chipColors, Countdown, Loading, Text, useAsync, useTimeUntil } from "./ui";
 
 function usePresentationTransition(
 	{ start, hold, onDone }: { start: number; hold?: boolean; onDone: () => void },
@@ -134,10 +137,11 @@ function usePresentationTransition(
 
 type Slide = Readonly<
 	& { noTransition?: boolean }
-	& (PresentationState & { type: "countdown" | "none" | "image" | "video" } | {
+	& (PresentationState & { type: "countdown" | "none" | "image" | "video" | "scoreboard" } | {
 		type: "submission";
 		scoreboard: Scoreboard;
 		problemLabel: string;
+		end: number;
 		data: Readonly<
 			(PresentationState & { type: "submissions" })["problems"][number]["solutions"][number]
 		>;
@@ -151,15 +155,11 @@ async function controlPresentation(
 ) {
 	if (
 		state.type == "countdown" || state.type == "image" || state.type == "video"
-		|| state.type == "none"
+		|| state.type == "none" || state.type == "scoreboard"
 	) {
 		setSlide(state);
 	} else if (state.type == "submissions") {
-		const abort2 = new AbortController();
-		const { value: scoreboard } = await apiClient.feed("scoreboard", abort2.signal).next();
-		abort2.abort();
-		if (!scoreboard) throw new Error("expected scoreboard");
-
+		const scoreboard = await apiClient.request("getScoreboard");
 		const slides = state.problems.flatMap(prob =>
 			prob.solutions.map(
 				sol => ({ data: sol, problemLabel: prob.label, scoreboard, type: "submission" } as const)
@@ -167,18 +167,22 @@ async function controlPresentation(
 		);
 
 		let i = 0;
-		while (!abort.aborted) {
+		const slideDur = 20_000;
+		while (!abort.aborted && slides.length > 0) {
 			const slide = slides[(i++)%slides.length];
-			setSlide(slide);
-			await delay(20_000);
+			setSlide({ ...slide, end: Date.now()+slideDur });
+			await delay(slideDur, abort);
+			console.log("aaa");
 		}
 	}
-	await new Promise(res => abort.addEventListener("abort", res));
+	if (!abort.aborted) {
+		await new Promise(res => abort.addEventListener("abort", res));
+	}
 }
 
 function PresentationCountdown({ slide }: { slide: Slide & { type: "countdown" } }) {
 	const t = useTimeUntil(slide.to)!;
-	return <div className="flex flex-col gap-3 justify-center items-center mt-[10%]">
+	return <div className="flex flex-col gap-3 justify-center items-center">
 		<div className="flex flex-row items-start gap-3">
 			{t < 0 && <span className="text-5xl">-</span>}
 			<Countdown time={Math.abs(t)} />
@@ -191,9 +195,54 @@ function SubmissionSlide({ slide }: { slide: Slide & { type: "submission" } }) {
 	const probName = slide.scoreboard.problemNames.get(slide.problemLabel);
 	const team = slide.scoreboard.teams.get(slide.data.team);
 	const langColor = chipColors[chipColorKeys[badHash(slide.data.language)%chipColorKeys.length]];
+
+	const timing = useMemo(() => {
+		const dur = Math.max(2000, 100*[...slide.data.source.matchAll(/\n/g)].length);
+		const slowDownPeriod = 500, frac = slowDownPeriod/dur;
+		const a = .5/(frac*frac+2*frac*(.5-frac));
+		const c = 2*a*frac;
+		return { dur, frac, a, b: a*frac*frac-c*frac, c };
+	}, [slide.data]);
+
+	const [delayed, setDelayed] = useState<boolean>(true);
+	useEffect(() => {
+		const tm = setTimeout(() => setDelayed(false), 1000);
+		return () => clearTimeout(tm);
+	}, []);
+	const scrollData = useScroll({
+		dir: "vert",
+		duration: timing.dur,
+		delay: 0,
+		stop: delayed,
+		startDir: "forward",
+		easeFn: useCallback((t: number) => {
+			if (t < timing.frac) {
+				return t*t*timing.a;
+			} else if (1-t < timing.frac) {
+				t = 1-t;
+				return 1-t*t*timing.a;
+			}
+			return timing.b+timing.c*t;
+		}, [timing]),
+	});
+
+	const progressRef = useRef<HTMLDivElement>(null);
+	const endTime = slide.end;
+	useEffect(() => {
+		const start = Date.now();
+		const d = progressRef.current;
+		if (!d) return;
+		const int = setInterval(() => {
+			const prog = Math.min(100, (Date.now()-start)/(endTime-start)*100);
+			d.style.width = `${prog}%`;
+			if (prog >= 100) clearInterval(int);
+		}, 1000/30);
+		return () => clearInterval(int);
+	}, [endTime]);
+
 	return <div className="flex flex-col gap-1 h-full w-full max-w-5xl">
 		<div className="flex flex-row justify-between items-baseline">
-			<Text v="big">{slide.problemLabel}. {probName}</Text>
+			<Text v="md">{slide.problemLabel}. {probName}</Text>
 			<div className="flex flex-row gap-3 items-baseline">
 				<Text v="md" className="animate-flip-in" key={slide.data.title}>{slide.data.title}</Text>
 				<Text className={twJoin("px-2 py-1 rounded-md", langColor)} v="bold">
@@ -201,17 +250,32 @@ function SubmissionSlide({ slide }: { slide: Slide & { type: "submission" } }) {
 				</Text>
 			</div>
 		</div>
-		{team && <div className="flex flex-row items-center justify-end max-h-20 py-2 gap-4">
-			<div className="flex flex-col">
-				<Text v="bold">by {team.name}</Text>
-				<Text v="smbold">{team.members.join(", ")}</Text>
-			</div>
-			{team.logo != null
-				&& <img className="h-full animate-fade-in" src={new URL(team.logo, apiBaseUrl).href} />}
-		</div>}
-		<Divider />
-		<Text>{slide.data.summary}</Text>
+		<div className="self-start h-1 mt-1 bg-sky-400" ref={progressRef} />
+		<div className="flex flex-col overflow-hidden relative">
+			<Scroller data={scrollData} className="max-h-full relative pb-25">
+				<CodeBlock className="grow" source={slide.data.source} language={slide.data.language} />
+			</Scroller>
+			{team
+				&& <div className="flex flex-row items-center h-25 py-2 gap-4 absolute left-0 right-0 bottom-0 bg-black/80 z-30">
+					{team.logo != null
+						&& <img className="h-full animate-fade-in" src={new URL(team.logo, apiBaseUrl).href} />}
+					<div className="flex flex-col items-start gap-1 max-h-full">
+						<Text v="bold">by {team.name}</Text>
+						<Text v="smbold">{team.members.join(", ")}</Text>
+						<Text v="sm">{slide.data.summary}</Text>
+					</div>
+				</div>}
+		</div>
 	</div>;
+}
+
+function VideoSlide({ slide }: { slide: Slide & { type: "video" } }) {
+	const ref = useRef<HTMLVideoElement>(null);
+	useEffect(() => {
+		const tm = setTimeout(() => ref.current!.play(), 500);
+		return () => clearTimeout(tm);
+	}, []);
+	return <video src={slide.src} ref={ref} className="max-h-full max-w-full" />;
 }
 
 function PresentationSlide({ slide }: { slide: Slide }) {
@@ -220,8 +284,9 @@ function PresentationSlide({ slide }: { slide: Slide }) {
 	else if (slide.type == "countdown") inner = <PresentationCountdown slide={slide} />;
 	else if (slide.type == "submission") inner = <SubmissionSlide slide={slide} />;
 	else if (slide.type == "image") inner = <img src={slide.src} className="max-w-full max-h-full" />;
-	else if (slide.type == "video") inner = <video src={slide.src} autoPlay />;
-	else return slide satisfies never;
+	else if (slide.type == "video") inner = <VideoSlide slide={slide} />;
+	else if (slide.type == "scoreboard") inner = <></>;
+	else return slide.type satisfies never;
 	return <div className="flex flex-col items-center justify-center w-full h-full">{inner}</div>;
 }
 
@@ -283,13 +348,20 @@ export default function Presentation() {
 		if (!fun.loading && abortRef.current) fun.run(abortRef.current.signal);
 	}, [fun]);
 
+	if (slides[1].length == 1 && slides[1][0].type == "scoreboard") {
+		return <ScoreboardPage />;
+	}
+
+	const last = slides[1][slides[1].length-1] ?? null;
+	const logo = last != null && last.type == "video" && last.logo;
+
 	return <div className="flex flex-col gap-8 h-dvh justify-center items-center">
-		<h1 className="text-5xl flex flex-row drop-shadow-lg/100 drop-shadow-black z-10">
-			<span>HAMMERWARS</span>
-			<span className="font-black">2025</span>
-			{/* <span className="inline-block w-[100px] shrink-0" /> */}
-			{/* <span className="ml-auto"></span> */}
-		</h1>
+		{logo != null && logo != false
+			? <img src={logo} className="drop-shadow-lg/100 drop-shadow-black max-h-18 z-10" />
+			: <h1 className="text-5xl flex flex-row drop-shadow-lg/100 drop-shadow-black z-10">
+				<span>HAMMERWARS</span>
+				<span className="font-black">2025</span>
+			</h1>}
 		<div className="relative w-[90vw] h-[80vh] bg-black/70 shadow-[0_0_50px_50px] shadow-black/70">
 			{slides[1].length == 0
 				? <Loading />

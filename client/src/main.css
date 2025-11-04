@@ -3,7 +3,7 @@
 
 @theme {
 	--font-big: Oxanium;
-	--font-mono: "IBM Plex Sans";
+	--font-main: "IBM Plex Sans";
 
   --color-zinc-50:  #dcecf0;
   --color-zinc-100: #c0e1e7;
@@ -38,7 +38,7 @@ h3,h2,h1 {
 }
 
 html, body {
-	font-family: var(--font-mono);
+	font-family: var(--font-main);
   scroll-behavior: smooth;
   font-size-adjust: 0.7;
 }

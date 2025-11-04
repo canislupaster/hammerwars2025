@@ -18,7 +18,7 @@ function ClickerQueueItem(
 	let details: [string, ComponentChildren][] = [];
 	if (v.type == "countdown") {
 		title = "Countdown";
-		details = [["Until", new Date(v.to).toLocaleDateString()], ["Title", v.title]];
+		details = [["Until", new Date(v.to).toLocaleString()], ["Title", v.title]];
 	} else if (v.type == "submissions") {
 		title = "Submissions";
 	} else if (v.type == "image") {
@@ -29,10 +29,15 @@ function ClickerQueueItem(
 		]];
 	} else if (v.type == "video") {
 		title = "Video";
-		details = [["Source", v.src]];
+		details = [["Source", v.src], ["Logo", v.logo ?? "(none)"]];
 	} else if (v.type == "duel") {
 		title = "Duel";
-		details = [["Contest ID", v.cfContestId]];
+		details = [["Contest ID", v.cfContestId], ["Layout", v.layout], [
+			"Players",
+			v.players.map(x => x.name).join(", "),
+		]];
+	} else if (v.type == "scoreboard") {
+		title = "Scoreboard";
 	} else {
 		return v satisfies never;
 	}
@@ -51,7 +56,7 @@ function ClickerQueueItem(
 		</div>
 		{details.length > 0 && <>
 			<Divider />
-			<div className="grid grid-cols-[auto_1fr_auto] gap-2 self-center">
+			<div className="grid grid-cols-[auto_1fr_auto] gap-2 self-center items-center">
 				{details.map(([k, v]) =>
 					<Fragment key={k}>
 						<Text v="smbold" className="text-right">{k}</Text> <Divider className="h-full" vert />
@@ -86,7 +91,6 @@ function ClickerQueue() {
 		let lastHeight: number | null = null;
 		let tm: number | null = null;
 		const cb = () => {
-			console.log(lastHeight, d.scrollHeight);
 			if (lastHeight == d.scrollHeight) {
 				tm = null;
 				return;
@@ -119,7 +123,7 @@ function ClickerQueue() {
 			? <Loading />
 			: data.queue.length == 0
 			? <Text v="dim">There's nothing here.</Text>
-			: <div className="flex flex-col gap-2 w-full max-h-[70dvh] overflow-scroll relative"
+			: <div className="flex flex-col gap-2 w-full max-h-[70dvh] overflow-auto relative"
 				ref={queueRef}>
 				{data.queue.map((v, i) =>
 					<ClickerQueueItem key={i} v={v} loading={l} active={i == data.current} jump={() => {

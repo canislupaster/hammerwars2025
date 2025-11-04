@@ -137,8 +137,10 @@ export type TeamContestProperties = {
 	visibleDirectories: string[];
 };
 
+export type DuelLayout = "left" | "both" | "right" | "score";
+
 export type PresentationState = Readonly<
-	{ type: "none" } | { type: "countdown"; to: number; title: string } | {
+	{ type: "none" | "scoreboard" } | { type: "countdown"; to: number; title: string } | {
 		type: "submissions";
 		problems: {
 			label: string;
@@ -151,7 +153,12 @@ export type PresentationState = Readonly<
 			}[];
 		}[];
 		teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
-	} | { type: "image"; src: string } | { type: "video"; src: string }
+	} | { type: "image"; src: string } | { type: "video"; src: string; logo?: string } | {
+		type: "duel";
+		layout: DuelLayout;
+		problemLabels: string[];
+		players: { name: string; src?: string; solved: Set<string> }[];
+	}
 >;
 
 export type SubmissionRankings = {
@@ -188,8 +195,14 @@ export type ContestProperties = {
 	organizerTeamId: number | null;
 	presentation: {
 		queue:
-			({ type: "duel"; cfContestId: number; layout: "left" | "both" | "right" | "score" }
-				| PresentationState & { type: "countdown" | "submissions" | "image" | "video" })[];
+			({
+				type: "duel";
+				cfContestId: number;
+				layout: DuelLayout;
+				players: { name: string; cf: string; src?: string }[];
+			} | PresentationState & {
+				type: "countdown" | "submissions" | "image" | "video" | "scoreboard";
+			})[];
 		current: number;
 	};
 };
@@ -344,6 +357,11 @@ export type API = {
 		request: { team: number; afterId: number | null };
 		response: { id: number; title: string; body: string; time: number } | null;
 	};
+	getSubmission: {
+		request: { team: number; problem: string };
+		response: { filename: string; source: string; language: string; runtime: number | null };
+	};
+	getScoreboard: { response: Scoreboard };
 	scoreboard: { feed: true; response: Scoreboard };
 	presentation: { feed: true; response: PresentationState };
 	screenshot: { request: { team: number; data: string; mac: string } };
