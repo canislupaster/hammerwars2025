@@ -285,16 +285,16 @@ export default function RegistrationEditor() {
 
 	const toast = useToast();
 
-	const untilClose = useTimeUntil(window.current?.data.closes ?? null);
-	const hasClosed = untilClose != null && untilClose < 0;
+	const untilClose = useTimeUntil(window.current?.data.inPersonCloses ?? null);
 	const unsubmit = useConfirmUnsubmit(() =>
 		userInfo != null && updateInfo.call({ info: userInfo, submit: false })
 	);
-	if (data == null || userInfo == null || window.current == null || hasClosed == null) {
+	if (data == null || userInfo == null || window.current == null) {
 		return <Loading />;
 	}
 
-	const registrationClosed = !window.current.data.open || hasClosed;
+	const inPersonClosed = !window.current.data.inPersonOpen || untilClose != null && untilClose < 0;
+	const onlineClosed = !window.current.data.onlineOpen;
 
 	const modInfo = <K extends keyof PartialUserInfo>(key: K, newV: PartialUserInfo[K]) => {
 		if (!loading) setUserInfo({ ...userInfo, [key]: newV });
@@ -311,18 +311,22 @@ export default function RegistrationEditor() {
 
 	const inPersonMember = team?.members.find(x => x.inPerson == true);
 	const virtualMember = team?.members.find(x => x.inPerson == false);
+	const teamLocked = inPersonMember == null && onlineClosed
+		|| inPersonClosed && inPersonMember != null;
+	const infoLocked = userInfo.inPerson == null && onlineClosed
+		|| inPersonClosed && userInfo.inPerson != null;
 
 	return <MainContainer>
 		<Card className="w-full max-w-2xl gap-3">
 			<Text v="lg">User information</Text>
-			{registrationClosed
+			{infoLocked
 				? <Alert title="Registration has closed"
-					txt="Sorry, we reached capacity early! You can't submit information anymore." />
+					txt="Sorry, we reached capacity early! You can't submit registrations anymore." />
 				: <>
 					{data.submitted
 						&& <Alert title="Unsubmit to edit your information" txt="Don't forget to resubmit!" />}
 					{untilClose != null && untilClose > 0 && <>
-						<Text v="bold">Registration closes in</Text>
+						<Text v="bold">In-person registration closes in</Text>
 						<Countdown time={untilClose} />
 					</>}
 				</>}
@@ -330,7 +334,7 @@ export default function RegistrationEditor() {
 				ev.preventDefault();
 				if (anyMissing) {
 					setShowMissing(true);
-				} else if (!data.submitted && !registrationClosed && ev.currentTarget.reportValidity()) {
+				} else if (!data.submitted && !infoLocked && ev.currentTarget.reportValidity()) {
 					updateInfo.call({ info: userInfo, submit: true });
 				}
 			}}>
@@ -479,14 +483,14 @@ export default function RegistrationEditor() {
 				{data.submitted
 					? <div className="flex flex-row gap-2 items-center mt-5">
 						<Button loading={loading} onClick={() => {
-							if (registrationClosed) unsubmit.open();
+							if (infoLocked) unsubmit.open();
 							else updateInfo.call({ info: userInfo, submit: false });
 						}} className={bgColor.sky}>
 							Unsubmit
 						</Button>
 					</div>
 					: <div className="flex flex-row gap-2 items-center mt-5">
-						<Button loading={loading} disabled={registrationClosed} className={bgColor.green}>
+						<Button loading={loading} disabled={infoLocked} className={bgColor.green}>
 							Submit
 						</Button>
 						<AppTooltip content="Use this option if you'd like to submit your information later.">
@@ -512,9 +516,9 @@ export default function RegistrationEditor() {
 		<Card className="w-full max-w-2xl gap-3">
 			<Text v="lg">Team management</Text>
 
-			{registrationClosed
+			{teamLocked
 				? <Alert title="Registration has closed"
-					txt="Teams are locked. Changes to name or logo may not be reflected in contest." />
+					txt="Teams are locked and changes to name or logo may not be reflected in contest." />
 				: <>
 					<Text>
 						Teams will be locked when registration closes. If you need help finding a team, just ask
@@ -641,20 +645,17 @@ export default function RegistrationEditor() {
 						)}
 					</div>
 
-					<Button disabled={registrationClosed} loading={loading} className="mt-1 w-fit"
-						onClick={() => {
-							leaveTeam.call();
-						}}>
+					<Button disabled={teamLocked} loading={loading} className="mt-1 w-fit" onClick={() => {
+						leaveTeam.call();
+					}}>
 						Leave team
 					</Button>
 				</div>
 				: <div className="flex flex-row gap-2">
-					<Button disabled={registrationClosed} loading={loading}
-						onClick={() => setCreateTeamOpen(true)}>
+					<Button disabled={teamLocked} loading={loading} onClick={() => setCreateTeamOpen(true)}>
 						Create team
 					</Button>
-					<Button disabled={registrationClosed} loading={loading}
-						onClick={() => setJoinTeamOpen(true)}>
+					<Button disabled={teamLocked} loading={loading} onClick={() => setJoinTeamOpen(true)}>
 						Join team
 					</Button>
 				</div>}
@@ -689,8 +690,8 @@ export default function RegistrationEditor() {
 					}} actionName="Delete account" title="Delete account?">
 					<Text v="bold">Are you sure you want to delete your account?</Text>
 					<Text>
-						You will no longer be eligible to participate and unable to register if registration has
-						closed.
+						You will no longer be eligible to participate in person and unable to register if
+						registration has closed.
 					</Text>
 					<Text>
 						You can reuse your email for a new account by using the same verification email.

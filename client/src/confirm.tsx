@@ -27,8 +27,7 @@ function ConfirmAttendanceInner() {
 	const d = info.current;
 	const team = d?.data.team ?? null;
 
-	const untilClose = useTimeUntil(window.current?.data.closes ?? null);
-	const closed = untilClose != null && untilClose < 0;
+	const untilClose = useTimeUntil(window.current?.data.inPersonCloses ?? null);
 	const confirmAndUnsubmit = () => {
 		if (d?.data.info == null) return;
 		confirmReq.call({ pairUp });
@@ -40,6 +39,7 @@ function ConfirmAttendanceInner() {
 	const loading = unsubmitReq.loading || confirmReq.loading || info.loading;
 	useEffect(() => setAttempted(attempted || !loading), [attempted, loading]);
 	if (window.current == null || d == null || (loading && !attempted)) return <Loading />;
+	const closed = window.current.data.inPersonOpen == false || untilClose != null && untilClose < 0;
 
 	const r = d?.data.submitted == false || d?.data.info.inPerson == null
 		? "cancelled"

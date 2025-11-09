@@ -184,6 +184,7 @@ export type SubmissionRankings = {
 export type ContestProperties = {
 	registrationEnds: number | null;
 	registrationOpen: boolean;
+	onlineRegistrationOpen: boolean;
 	domJudgeCid: string;
 	// forward: skip until team/prob is over or AC, backward: stop at when team/prob occurs
 	resolveIndex: { type: "index"; index: number } | {
@@ -299,7 +300,9 @@ export type API = {
 	login: { request: { email: string; password: string }; response: "incorrect" | null };
 	checkEmailVerify: { request: { id: number; key: string }; response: boolean };
 	createAccount: { request: { id: number; key: string; password: string | null } };
-	registrationWindow: { response: { open: boolean; closes: number | null } };
+	registrationWindow: {
+		response: { inPersonOpen: boolean; inPersonCloses: number | null; onlineOpen: boolean };
+	};
 	checkSession: unknown;
 	setPassword: { request: { newPassword: string } };
 	getInfo: {

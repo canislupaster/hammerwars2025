@@ -292,13 +292,17 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		},
 	});
 
-	const checkRegistrationOpen = async (trx: DBTransaction) => {
-		if (await getProperty(trx, "registrationOpen") != true) {
-			throw err("Registration is not open");
-		}
-		const ends = await getProperty(trx, "registrationEnds");
-		if (ends != null && Date.now() >= ends) {
-			throw err("Registration has ended");
+	const checkRegistrationOpen = async (trx: DBTransaction, inPerson: boolean) => {
+		if (!inPerson && await getProperty(trx, "onlineRegistrationOpen") != true) {
+			throw err("Online registration is not open");
+		} else if (inPerson) {
+			if (await getProperty(trx, "registrationOpen") != true) {
+				throw err("In-person registration is not open");
+			}
+			const ends = await getProperty(trx, "registrationEnds");
+			if (ends != null && Date.now() >= ends) {
+				throw err("In-person registration has ended");
+			}
 		}
 	};
 
@@ -320,7 +324,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 					let submitted: UserInfo | null = null;
 					if (req.submit) {
-						await checkRegistrationOpen(trx);
+						await checkRegistrationOpen(trx, req.info.inPerson != null);
+
 						const parsed = userInfoSchema.safeParse(req.info);
 						if (!parsed.success) throw err("Can't submit: not fully filled out");
 						if (parsed.data.inPerson) {
@@ -381,8 +386,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				if (u == null) throw err("user does not exist");
 
 				if (u.team == null) {
-					// dont allow team creation after close
-					await checkRegistrationOpen(trx);
+					// dont allow in person team creation after close
+					await checkRegistrationOpen(trx, u.data.submitted?.inPerson != null);
 				}
 
 				let teamId: number;
@@ -440,17 +445,21 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		handler: async (c, req) => {
 			const userId = await auth(c);
 			const ret = await transaction(async trx => {
-				await checkRegistrationOpen(trx);
-				if ((await getDbCheck(trx, "user", userId)).team != null) {
+				const u = await getDbCheck(trx, "user", userId);
+				if (u.team != null) {
 					throw err("You need to leave your team first");
 				}
 				const team = await trx.selectFrom("team").selectAll().where("joinCode", "==", req.joinCode)
 					.executeTakeFirst();
 				if (!team) throw err("Invalid join code.");
-				if (
-					(await getMembers(trx, team.id)).length+1 > teamLimit
-					&& team.id != await getProperty(trx, "organizerTeamId")
-				) {
+				const mems = await getMembers(trx, team.id);
+
+				await checkRegistrationOpen(
+					trx,
+					[u, ...mems].some(v => v.data.submitted?.inPerson != null),
+				);
+
+				if (mems.length+1 > teamLimit && team.id != await getProperty(trx, "organizerTeamId")) {
 					return { full: true };
 				}
 				await setDb(trx, "user", userId, { team: team.id });
@@ -465,9 +474,9 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		handler: async c => {
 			const userId = await auth(c);
 			await transaction(async trx => {
-				await checkRegistrationOpen(trx);
-				const u = await getDb(trx, "user", userId);
-				if (u?.team == null) throw err("User is not in a team");
+				const u = await getDbCheck(trx, "user", userId);
+				await checkRegistrationOpen(trx, u.data.submitted?.inPerson != null);
+				if (u.team == null) throw err("User is not in a team");
 				await setDb(trx, "user", userId, { team: null });
 				const count = await trx.selectFrom("user").select(s => s.fn.countAll<number>().as("count"))
 					.where("team", "=", u.team).executeTakeFirstOrThrow();
@@ -559,8 +568,9 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	makeRoute(app, "registrationWindow", {
 		async handler(_c) {
 			return await transaction(async trx => ({
-				open: await getProperty(trx, "registrationOpen") ?? false,
-				closes: await getProperty(trx, "registrationEnds"),
+				inPersonOpen: await getProperty(trx, "registrationOpen") ?? false,
+				inPersonCloses: await getProperty(trx, "registrationEnds"),
+				onlineOpen: await getProperty(trx, "onlineRegistrationOpen") ?? false,
 			}));
 		},
 	});
@@ -594,6 +604,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			}),
 			presentation: presentationSchema,
 			daemonUpdate: z.object({ version: z.int(), source: z.string() }).nullable(),
+			onlineRegistrationOpen: z.boolean(),
 		}).partial().strip(),
 		async handler(c, req) {
 			await keyAuth(c, true);
@@ -624,7 +635,6 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		async handler(c, req) {
 			const userId = await auth(c);
 			const [teamId, teamName] = await transaction(async trx => {
-				await checkRegistrationOpen(trx);
 				const teamId = (await getDbCheck(trx, "user", userId)).team;
 				if (teamId == null) throw err("user not in a team");
 				return [teamId, (await getDbCheck(trx, "team", teamId)).name] as const;

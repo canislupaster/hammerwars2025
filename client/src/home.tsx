@@ -415,7 +415,9 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 	const lg = lg2 || registerOnly == true;
 	const window = useRequest({ route: "registrationWindow", initRequest: true });
 	const closed = useMemo(
-		() => window.current?.data.closes != null && window.current.data.closes < Date.now(),
+		() =>
+			window.current?.data.inPersonCloses != null
+			&& window.current.data.inPersonCloses < Date.now(),
 		[window],
 	);
 	return <div className={twJoin("w-full relative")}>
@@ -459,12 +461,12 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 					iconRight={<IconChevronRight size={48} />}>
 					Register now
 				</Button>
-				{window.current?.data.closes != null
-					&& <Text v="normal" className="drop-shadow-xl/80 z-20">
+				{window.current?.data.inPersonCloses != null
+					&& <Text v="normal" className="drop-shadow-xl/80 z-20 mx-2">
 						{closed
-							? "Registration closed."
+							? "In-person registration closed"
 							: `Closes ${
-								new Date(window.current.data.closes).toLocaleDateString("en-US", {
+								new Date(window.current.data.inPersonCloses).toLocaleDateString("en-US", {
 									day: "numeric",
 									month: "long",
 								})
