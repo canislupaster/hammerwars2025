@@ -377,9 +377,13 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		handler: async (c, req) => {
 			const userId = await auth(c);
 			await transaction(async trx => {
-				await checkRegistrationOpen(trx);
 				const u = await getDb(trx, "user", userId);
 				if (u == null) throw err("user does not exist");
+
+				if (u.team == null) {
+					// dont allow team creation after close
+					await checkRegistrationOpen(trx);
+				}
 
 				let teamId: number;
 				const common = { name: req.name, funFact: req.funFact };
@@ -488,12 +492,14 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				const { data, team } = await getDbCheck(trx, "user", userId);
 				const resume = await trx.selectFrom("resume").select("id").where("user", "=", userId)
 					.executeTakeFirst();
-				const data2 = {
+
+				const nonTeamData = {
 					organizer: team != null && team == await getProperty(trx, "organizerTeamId"),
 					info: data.info,
 					submitted: data.submitted != null,
 					confirmedAttendance: data.confirmedAttendance != undefined && data.submitted != null,
 					lastEdited: data.lastEdited,
+					pairUp: data.pairUp == true,
 					hasResume: resume != undefined,
 				};
 
@@ -509,7 +515,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					) => ["name", fn<number>("length", ["fileData"]).as("size")]).where("team", "=", team)
 						.execute();
 					return {
-						...data2,
+						...nonTeamData,
 						team: {
 							id: team,
 							funFact: teamData.funFact,
@@ -527,20 +533,24 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					};
 				}
 
-				return { ...data2, team: null };
+				return { ...nonTeamData, team: null };
 			});
 		},
 	});
 
 	makeRoute(app, "confirmAttendance", {
-		async handler(c) {
+		validator: z.object({ pairUp: z.boolean() }),
+		async handler(c, req) {
 			const userId = await auth(c);
 			await transaction(trx => {
 				return updateDb(
 					trx,
 					"user",
 					userId,
-					async old => ({ ...old, data: { ...old.data, confirmedAttendance: Date.now() } }),
+					async old => ({
+						...old,
+						data: { ...old.data, confirmedAttendance: Date.now(), pairUp: req.pairUp },
+					}),
 				);
 			});
 		},
@@ -664,11 +674,22 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					const udata = await getDbCheck(trx, "user", id);
 					const resume = await trx.selectFrom("resume").select("id").where("user", "=", id)
 						.executeTakeFirst();
+					const emailKey = await trx.selectFrom("emailVerification").select(["id", "key"]).where(
+						"email",
+						"=",
+						udata.email,
+					).executeTakeFirst();
 					out.users.push({
 						id,
 						email: udata.email,
+						emailKey: emailKey == undefined
+							? null
+							: { id: emailKey.id, key: emailKey.key.toString("hex") },
 						lastEdited: udata.data.lastEdited,
-						data: udata.data.submitted,
+						pairUp: udata.data.pairUp ?? null,
+						confirmedAttendanceTime: udata.data.confirmedAttendance ?? null,
+						submitted: udata.data.submitted,
+						info: udata.data.info,
 						team: udata.team,
 						resumeId: resume?.id ?? null,
 					});
@@ -687,7 +708,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				id: z.number(),
 				email: z.email(),
 				team: z.int().nullable(),
-				data: userInfoSchema.nullable(),
+				submitted: userInfoSchema.nullable(),
 			}).or(z.object({ id: z.number(), delete: z.literal(true) })),
 		),
 		async handler(c, req) {
@@ -697,15 +718,17 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					const old = await getDbCheck(trx, "user", user.id);
 
 					if ("delete" in user) {
-						await setDb(trx, "team", user.id, null);
+						await setDb(trx, "user", user.id, null);
 					} else {
 						await setDb(trx, "user", user.id, {
 							email: user.email,
 							data: {
 								...old.data,
 								lastEdited: Date.now(),
-								submitted: user.data,
-								info: user.data != null ? { ...user.data, agreeRules: true } : old.data.info,
+								submitted: user.submitted,
+								info: user.submitted != null
+									? { ...user.submitted, agreeRules: true }
+									: old.data.info,
 							},
 							team: user.team,
 						});

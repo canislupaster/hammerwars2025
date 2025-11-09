@@ -40,6 +40,7 @@ export type UserData = {
 	info: PartialUserInfo;
 	submitted: UserInfo | null;
 	confirmedAttendance?: number;
+	pairUp?: boolean;
 	lastEdited: number;
 	passwordHash: string;
 };

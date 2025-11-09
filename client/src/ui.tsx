@@ -255,6 +255,15 @@ export const Loading = (
 		{children}
 	</div>;
 
+export const LoadingOverlay = ({ open }: { open?: boolean }) =>
+	<div
+		className={twJoin(
+			"bg-black/40 z-10 fixed top-0 bottom-0 left-0 right-0 transition-opacity duration-75",
+			open != true && "opacity-0 pointer-events-none",
+		)}>
+		<Loading />
+	</div>;
+
 export const chipColors = {
 	red: "dark:bg-red-600 dark:border-red-400 bg-red-400 border-red-200",
 	green: "dark:bg-green-600 dark:border-green-400 bg-green-400 border-green-200",

@@ -146,6 +146,24 @@ function ShirtPreview(
 	</div>;
 }
 
+export function useConfirmUnsubmit(unsubmit: () => void) {
+	const [unsubmitOpen, setUnsubmitOpen] = useState(false);
+	return { unsubmitOpen, setUnsubmitOpen, unsubmit, open: () => setUnsubmitOpen(true) } as const;
+}
+
+export function ConfirmUnsubmit(
+	{ unsubmitOpen, unsubmit, setUnsubmitOpen }: ReturnType<typeof useConfirmUnsubmit>,
+) {
+	return <ConfirmModal open={unsubmitOpen} onClose={() => setUnsubmitOpen(false)} confirm={() => {
+		unsubmit();
+	}} actionName="Unsubmit" title="Are you sure you want to unsubmit?">
+		<Text>
+			You won't be registered for the event anymore or be allowed to reregister, since registration
+			has closed.
+		</Text>
+	</ConfirmModal>;
+}
+
 export default function RegistrationEditor() {
 	const [data, setData] = useState<API["getInfo"]["response"] | null>(null);
 	type InPerson = NonNullable<UserInfo["inPerson"]>;
@@ -243,31 +261,11 @@ export default function RegistrationEditor() {
 	const [joinTeamCode, setJoinTeamCode] = useState("");
 
 	const [deleteUserOpen, setDeleteUserOpen] = useState(false);
-	const [unsubmitOpen, setUnsubmitOpen] = useState(false);
 
 	const loading = info.loading || updateInfo.loading || updateTeam.loading || leaveTeam.loading
 		|| joinTeam.loading || changePassword.loading || updateResume.loading;
 	const team = data?.team ?? null;
 	const curTeam = team == null ? null : { name: team.name, funFact: team.funFact };
-
-	const [hasClosed, setHasClosed] = useState<boolean | null>(null);
-	useEffect(() => {
-		if (window.current?.data.closes != null) {
-			const closes = window.current.data.closes;
-			if (Date.now() >= closes) setHasClosed(true);
-			else {
-				setHasClosed(false);
-				const tm = setTimeout(() => setHasClosed(true), closes-Date.now());
-				return () => {
-					clearTimeout(tm);
-					setHasClosed(null);
-				};
-			}
-		} else {
-			setHasClosed(false);
-		}
-		return () => setHasClosed(null);
-	}, [window]);
 
 	const missing = useMemo(
 		() => ({
@@ -287,10 +285,11 @@ export default function RegistrationEditor() {
 
 	const toast = useToast();
 
-	const untilClose = useTimeUntil(
-		window.current?.data.closes != null ? window.current.data.closes : null,
+	const untilClose = useTimeUntil(window.current?.data.closes ?? null);
+	const hasClosed = untilClose != null && untilClose < 0;
+	const unsubmit = useConfirmUnsubmit(() =>
+		userInfo != null && updateInfo.call({ info: userInfo, submit: false })
 	);
-
 	if (data == null || userInfo == null || window.current == null || hasClosed == null) {
 		return <Loading />;
 	}
@@ -475,19 +474,12 @@ export default function RegistrationEditor() {
 					</>}
 				</div>
 
-				<ConfirmModal open={unsubmitOpen} onClose={() => setUnsubmitOpen(false)} confirm={() => {
-					updateInfo.call({ info: userInfo, submit: false });
-				}} actionName="Unsubmit" title="Are you sure you want to unsubmit?">
-					<Text>
-						You won't be registered for the event anymore or be allowed to reregister, since
-						registration has closed.
-					</Text>
-				</ConfirmModal>
+				<ConfirmUnsubmit {...unsubmit} />
 
 				{data.submitted
 					? <div className="flex flex-row gap-2 items-center mt-5">
 						<Button loading={loading} onClick={() => {
-							if (registrationClosed) setUnsubmitOpen(true);
+							if (registrationClosed) unsubmit.open();
 							else updateInfo.call({ info: userInfo, submit: false });
 						}} className={bgColor.sky}>
 							Unsubmit
@@ -520,16 +512,19 @@ export default function RegistrationEditor() {
 		<Card className="w-full max-w-2xl gap-3">
 			<Text v="lg">Team management</Text>
 
-			{registrationClosed ? <Alert title="Registration has closed" txt="Teams are locked." /> : <>
-				<Text>
-					Teams will be locked when registration closes. If you need help finding a team, just ask
-					in our <Anchor href="https://purduecpu.com/discord">Discord server.</Anchor>
-				</Text>
+			{registrationClosed
+				? <Alert title="Registration has closed"
+					txt="Teams are locked. Changes to name or logo may not be reflected in contest." />
+				: <>
+					<Text>
+						Teams will be locked when registration closes. If you need help finding a team, just ask
+						in our <Anchor href="https://purduecpu.com/discord">Discord server.</Anchor>
+					</Text>
 
-				{team == null && data.submitted
-					&& <Alert bad title="You must be in a team to participate."
-						txt="Please create or join a team. If you want to go solo, make a 1-person team, though this is highly discouraged!" />}
-			</>}
+					{team == null && data.submitted
+						&& <Alert bad title="You must be in a team to participate."
+							txt="Please create or join a team. If you want to go solo, make a 1-person team, though this is highly discouraged!" />}
+				</>}
 
 			<Modal open={createTeamOpen} onClose={() => setCreateTeamOpen(false)} title="Create team">
 				<form onSubmit={ev => {
@@ -575,7 +570,7 @@ export default function RegistrationEditor() {
 								</p>
 								<p>
 									All members of a team must participate together. Please ensure your members have
-									registered correctly
+									registered correctly.
 								</p>
 							</>
 						} />}
@@ -584,12 +579,11 @@ export default function RegistrationEditor() {
 						<Text>Team name</Text>
 						{data.organizer
 							? <Input readOnly value="Organizer" />
-							: <Input disabled={loading} readonly={registrationClosed} required
-								{...teamNameValidity} pattern={validNameRe} onBlur={ev => {
-								if (registrationClosed) return;
-								teamNameValidity.onBlur(ev);
-								if (data?.team) updateTeam.call({ ...curTeam, name: data.team?.name });
-							}} />}
+							: <Input disabled={loading} required {...teamNameValidity} pattern={validNameRe}
+								onBlur={ev => {
+									teamNameValidity.onBlur(ev);
+									if (data?.team) updateTeam.call({ ...curTeam, name: data.team?.name });
+								}} />}
 					</div>
 
 					{team.logo == null
@@ -598,8 +592,7 @@ export default function RegistrationEditor() {
 						: <div className="flex flex-col gap-2">
 							<img src={new URL(team.logo, apiBaseUrl).href}
 								className="max-h-32 object-contain rounded" />
-							<Button disabled={registrationClosed}
-								onClick={() => updateTeam.call({ ...curTeam, logo: "remove" })}>
+							<Button onClick={() => updateTeam.call({ ...curTeam, logo: "remove" })}>
 								Remove logo
 							</Button>
 						</div>}
@@ -609,16 +602,15 @@ export default function RegistrationEditor() {
 						Your image will be cropped to fit in a square. (Ideally, you should use a square image.)
 					</Text>
 					<div className="flex flex-row gap-2">
-						<FileInput disabled={registrationClosed} maxSize={logoMaxSize} mimeTypes={logoMimeTypes}
-							onUpload={([file]) => {
-								void toBase64(file).then(base64 =>
-									updateTeam.call({
-										...curTeam,
-										logo: { base64, mime: file.type as typeof logoMimeTypes[number] },
-									})
-								);
-							}} />
-						<GenerateTeamLogo disabled={registrationClosed} refresh={infoCall} />
+						<FileInput maxSize={logoMaxSize} mimeTypes={logoMimeTypes} onUpload={([file]) => {
+							void toBase64(file).then(base64 =>
+								updateTeam.call({
+									...curTeam,
+									logo: { base64, mime: file.type as typeof logoMimeTypes[number] },
+								})
+							);
+						}} />
+						<GenerateTeamLogo refresh={infoCall} />
 					</div>
 
 					<Text v="bold" className="-mb-2">Join code</Text>

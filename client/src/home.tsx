@@ -1,7 +1,7 @@
 import { IconCalendar, IconChevronRight } from "@tabler/icons-preact";
 import { ComponentChildren } from "preact";
 import { lazy } from "preact-iso";
-import { useEffect, useErrorBoundary, useRef, useState } from "preact/hooks";
+import { useEffect, useErrorBoundary, useMemo, useRef, useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
 import { fill, Scoreboard, timePlace } from "../../shared/util";
 import { useFeed, useRequest } from "./clientutil";
@@ -414,6 +414,10 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 	const lg2 = useLg();
 	const lg = lg2 || registerOnly == true;
 	const window = useRequest({ route: "registrationWindow", initRequest: true });
+	const closed = useMemo(
+		() => window.current?.data.closes != null && window.current.data.closes < Date.now(),
+		[window],
+	);
 	return <div className={twJoin("w-full relative")}>
 		<div
 			className={twJoin(
@@ -457,11 +461,14 @@ function Hero({ registerOnly }: { registerOnly?: boolean }) {
 				</Button>
 				{window.current?.data.closes != null
 					&& <Text v="normal" className="drop-shadow-xl/80 z-20">
-						Closes{" "}
-						{new Date(window.current.data.closes).toLocaleDateString("en-US", {
-							day: "numeric",
-							month: "long",
-						})}!
+						{closed
+							? "Registration closed."
+							: `Closes ${
+								new Date(window.current.data.closes).toLocaleDateString("en-US", {
+									day: "numeric",
+									month: "long",
+								})
+							}!`}
 					</Text>}
 			</div>
 		</div>

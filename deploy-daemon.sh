@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 export $(cat scripts/.deployenv | xargs)
-rsync -rchavzP --stats . $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH --filter='merge .rsync-filter-daemon'
+rsync -rchavzP --stats . $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH --filter='merge .rsync-filter-daemon' --exclude="*"
 scp ./scripts/.env.daemon.local $REMOTE_USER@$REMOTE_HOST:$REMOTE_PATH/scripts/.env
 ssh -tt $REMOTE_USER@$REMOTE_HOST "
 	set -euxo pipefail

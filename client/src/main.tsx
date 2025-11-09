@@ -48,23 +48,25 @@ export function MainContainer(
 
 const LazyRegistration = lazy(() => import("./registration").then(a => a.default));
 
-function RegisterPage() {
-	const [email, setEmail] = useState("");
-	const req = useRequest({ route: "register" });
-	const window = useRequest({ route: "registrationWindow", initRequest: true });
-	const closesIn = useTimeUntil(window.current?.data.closes ?? null);
-	const goto = useGoto();
-
+export function useLoggedIn() {
 	const { call, current } = useRequest({ route: "checkSession", throw: false });
 	const [noSession, setNoSession] = useState(false);
 	useEffect(() => {
 		if (LocalStorage.session != undefined) call();
 		else setNoSession(true);
 	}, [call]);
+	return { loggedIn: current?.type == "ok", loading: current == null && !noSession };
+}
 
-	return current?.type == "ok"
+function RegisterPage() {
+	const [email, setEmail] = useState("");
+	const req = useRequest({ route: "register" });
+	const goto = useGoto();
+	const loggedIn = useLoggedIn();
+
+	return loggedIn.loggedIn
 		? <LazyRegistration />
-		: current == null && !noSession
+		: loggedIn.loading
 		? <Loading />
 		: req.current != null && req.current.type == "ok"
 		? <MainContainer>
@@ -86,27 +88,28 @@ function RegisterPage() {
 		: <MainContainer>
 			<Card className="w-full max-w-md gap-3">
 				<Text v="big" className="self-center">Register</Text>
-				{req.loading || window.loading
-					? <Loading />
-					: closesIn != null && closesIn < 0
-					? <Alert title="Registration has closed!"
-						txt="HammerWars has reached capacity. If you have any questions, please contact us." />
-					: <form onSubmit={ev => {
-						ev.preventDefault();
-						if (ev.currentTarget.reportValidity()) {
-							req.call({ email });
-						}
-					}} className="flex flex-col gap-3">
-						<Text v="smbold">Email</Text>
-						<Text v="dim" className="-mt-2">
-							Try using your personal email if you don't receive the verification link in your
-							school email.
-						</Text>
-						<Input value={email} valueChange={v => setEmail(v)} type="email" required />
-						<Button>Register</Button>
-					</form>}
+				{req.loading ? <Loading /> : <form onSubmit={ev => {
+					ev.preventDefault();
+					if (ev.currentTarget.reportValidity()) {
+						req.call({ email });
+					}
+				}} className="flex flex-col gap-3">
+					<Text v="smbold">Email</Text>
+					<Text v="dim" className="-mt-2">
+						Try using your personal email if you don't receive the verification link in your school
+						email.
+					</Text>
+					<Input value={email} valueChange={v => setEmail(v)} type="email" required />
+					<Button>Register</Button>
+				</form>}
 				<Text v="sm">
-					Already have an account? <Anchor onClick={() => goto("/login")}>Login instead</Anchor>
+					Already have an account?{" "}
+					<Anchor onClick={() => {
+						LocalStorage.loginRedirect = "register";
+						goto("/login");
+					}}>
+						Login instead
+					</Anchor>
 				</Text>
 			</Card>
 		</MainContainer>;
@@ -114,18 +117,21 @@ function RegisterPage() {
 
 export function useEmailVerification() {
 	const loc = useLocation();
-	const { call, loading, ...verified } = useRequest({ route: "checkEmailVerify" });
+	const { call, ...verified } = useRequest({ route: "checkEmailVerify" });
+	const [invalidParams, setInvalidParams] = useState(false);
 	useEffect(() => {
-		if (loc.query.id && isFinite(Number.parseInt(loc.query.id, 10)) && loc.query.key) {
+		if ("id" in loc.query && isFinite(Number.parseInt(loc.query.id, 10)) && "key" in loc.query) {
+			setInvalidParams(false);
 			call({ id: Number.parseInt(loc.query.id, 10), key: loc.query.key });
 		} else {
-			throw new Error("Invalid verify URL");
+			setInvalidParams(true);
 		}
 	}, [call, loc.query]);
 
 	return {
-		invalid: verified.current == null || verified.current.type != "ok" || !verified.current.data,
-		req: loading ? null : verified.request,
+		invalid: invalidParams || verified.current != null && !verified.current.data,
+		loading: verified.request == null && !invalidParams,
+		req: verified.request,
 	};
 }
 
@@ -144,8 +150,8 @@ function VerifyPage() {
 	const verified = useEmailVerification();
 	const r = verified.req;
 
-	if (r == null || createAccReq.loading) return <Loading />;
-	if (verified.invalid) {
+	if (verified.loading || createAccReq.loading) return <Loading />;
+	if (verified.invalid || r == null) {
 		return <ErrorPage errName="This verification link is invalid">
 			<Text>Please contact us for support through our Discord.</Text>
 		</ErrorPage>;
@@ -208,7 +214,11 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 				}
 
 				if (done) done();
-				else goto("/register");
+				else {
+					const r = LocalStorage.loginRedirect;
+					LocalStorage.loginRedirect = undefined;
+					goto(`/${r ?? "register"}`);
+				}
 			}
 		},
 	});
@@ -261,7 +271,6 @@ function InnerApp() {
 		if (import.meta.env.DEV) return;
 
 		setOldRoute(loc.url);
-		errorShown.current = true;
 		loc.route(errorPath);
 	}) as [Error | undefined, () => void];
 
@@ -273,7 +282,7 @@ function InnerApp() {
 	useEffect(() => {
 		if (err == undefined) return;
 		if (loc.path == errorPath) errorShown.current = true;
-		else if (errorShown.current && loc.path != errorPath) retry();
+		else if (errorShown.current && loc.path != errorPath) resetErr();
 	}, [err, loc.path, resetErr, retry]);
 
 	if (err != undefined) {

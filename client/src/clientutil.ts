@@ -3,8 +3,10 @@ import { API, APIClient, APIError, APIRequest, APIRequestBase, FeedAPI, NonFeedA
 	ServerResponse, Session, stringifyExtra } from "../../shared/util";
 import { useAsync } from "./ui";
 
-export type LocalStorage = Partial<{ session: Session; apiKey: string }> & { toJSON(): unknown };
-const localStorageKeys = ["session", "apiKey"] as const satisfies Exclude<
+export type LocalStorage = Partial<
+	{ session: Session; apiKey: string; loginRedirect: "register" | "confirm" }
+> & { toJSON(): unknown };
+const localStorageKeys = ["session", "apiKey", "loginRedirect"] as const satisfies Exclude<
 	keyof LocalStorage,
 	"toJSON"
 >[];

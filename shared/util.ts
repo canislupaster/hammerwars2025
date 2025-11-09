@@ -283,8 +283,12 @@ export type AdminUserData = {
 	id: number;
 	email: string;
 	lastEdited: number;
-	data: UserInfo | null;
+	submitted: UserInfo | null;
+	info: PartialUserInfo;
+	pairUp: boolean | null;
+	emailKey: { id: number; key: string } | null;
 	team: number | null;
+	confirmedAttendanceTime: number | null;
 	resumeId: number | null;
 };
 
@@ -305,6 +309,7 @@ export type API = {
 			submitted: boolean;
 			lastEdited: number;
 			confirmedAttendance: boolean;
+			pairUp: boolean;
 			team: {
 				id: number;
 				name: string;
@@ -333,7 +338,7 @@ export type API = {
 	};
 	joinTeam: { request: { joinCode: string }; response: { full: boolean } };
 	leaveTeam: unknown;
-	confirmAttendance: unknown;
+	confirmAttendance: { request: { pairUp: boolean } };
 	getProperties: { response: Partial<ContestProperties> };
 	setProperties: { request: Partial<ContestProperties> };
 	announce: { request: { teams: number[] | "allTeams"; title: string; body: string } };
@@ -341,7 +346,11 @@ export type API = {
 	getTeamLogo: { request: { id: number }; response: { base64: string; mime: string } };
 	allData: { response: { users: AdminUserData[]; teams: AdminTeamData[] } };
 	setUsers: {
-		request: (Omit<AdminUserData, "resumeId" | "lastEdited"> | { id: number; delete: true })[];
+		request:
+			(Omit<
+				AdminUserData,
+				"emailKey" | "pairUp" | "resumeId" | "info" | "lastEdited" | "confirmedAttendanceTime"
+			> | { id: number; delete: true })[];
 	};
 	setTeams: { request: (Omit<AdminTeamData, "logoId"> | { id: number; delete: true })[] };
 	teamInfo: { request: { id: number }; response: AdminTeamData };
