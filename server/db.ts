@@ -14,6 +14,7 @@ type Database = {
 		funFact: string | null;
 	};
 	teamLogo: { id: GeneratedAlways<number>; team: number; logo: Buffer; logoMime: string };
+	teamFile: { id: GeneratedAlways<number>; team: number; name: string; fileData: Buffer };
 	teamScreenshot: {
 		id: GeneratedAlways<number>;
 		team: number;
@@ -46,6 +47,7 @@ export type UserData = {
 type DatabaseData = {
 	team: Database["team"];
 	teamLogo: Database["teamLogo"];
+	teamFile: Database["teamFile"];
 	teamScreenshot: Database["teamScreenshot"];
 	resume: Database["resume"];
 	user: Omit<Database["user"], "data"> & { data: UserData };
@@ -141,6 +143,26 @@ const migrator = new Migrator({
 					},
 					async down(db) {
 						await db.schema.alterTable("team").dropColumn("funFact").execute();
+					},
+				} satisfies Migration,
+				"3_team_files": {
+					async up(db) {
+						await db.schema.createTable("teamFile").addColumn(
+							"id",
+							"integer",
+							col => col.primaryKey().autoIncrement(),
+						).addColumn(
+							"team",
+							"integer",
+							col => col.notNull().references("team.id").onDelete("cascade"),
+						).addColumn("name", "text", c => c.notNull()).addColumn(
+							"fileData",
+							"blob",
+							c => c.notNull(),
+						).addUniqueConstraint("teamFileName", ["team", "name"]).execute();
+					},
+					async down(db) {
+						await db.schema.dropTable("teamFile").execute();
 					},
 				} satisfies Migration,
 			};

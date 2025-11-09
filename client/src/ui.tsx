@@ -9,6 +9,7 @@ import { useCallback, useContext, useEffect, useErrorBoundary, useId, useMemo, u
 import { ArrowContainer, Popover, PopoverState } from "react-tiny-popover";
 import { twJoin, twMerge } from "tailwind-merge";
 import { debounce, delay, fill } from "../../shared/util";
+import { formatFileSize } from "./clientutil";
 
 // dump of a bunch of UI & utility stuff ive written...
 
@@ -775,17 +776,12 @@ export function Modal(
 		if (!show) return;
 		const el = modalRef.current!;
 		const disp = setToastRoot?.(el);
-		// showmodal is not needed and ruins transition (what the hell)
 		el.showModal();
 		return () => {
 			disp?.();
 			el.close();
 		};
 	}, [setToastRoot, show]);
-
-	useEffect(() => {
-		modalRef.current?.showModal();
-	}, [open]);
 
 	return <ShowTransition open={open} openClassName="show" closedClassName="not-show"
 		update={setShow} ref={modalRef}>
@@ -1430,13 +1426,15 @@ export function ConfirmModal(
 	</Modal>;
 }
 
-export function AlertErrorBoundary({ children }: { children?: ComponentChildren }) {
+export function AlertErrorBoundary(
+	{ children, className }: { children?: ComponentChildren; className?: string },
+) {
 	const [err, reset] = useErrorBoundary(err => {
 		console.error("alert error boundary", err);
 	}) as [unknown, () => void];
 
 	if (err != undefined) {
-		return <Alert bad title="An error occurred" txt={
+		return <Alert bad title="An error occurred" className={className} txt={
 			<>
 				<Text>{err instanceof Error ? `Details: ${err.message}` : "Unknown error"}</Text>
 				<Button onClick={() => reset()} className="self-start">Retry</Button>
@@ -1605,8 +1603,10 @@ export function Countdown({ time, inline }: { time: number | null; inline?: bool
 }
 
 export function FileInput(
-	{ onUpload, maxSize, mimeTypes, children, ...props }: {
-		onUpload: (x: File) => void;
+	{ onUpload, multiple, maxSize, mimeTypes, setValidity, children, ...props }: {
+		onUpload: (x: File[]) => string | void;
+		setValidity?: boolean;
+		multiple?: boolean;
 		maxSize?: number;
 		mimeTypes?: readonly string[];
 	} & ButtonProps,
@@ -1624,28 +1624,34 @@ export function FileInput(
 			</Button>
 		</label>
 		<input id={id} ref={ref} accept={mimeTypes?.join(",")} type="file" className="sr-only"
-			onInput={ev => {
-				let err: string | null = null;
-				if (ev.currentTarget.files && ev.currentTarget.files.length > 0) {
-					const file = ev.currentTarget.files?.[0];
-					if (maxSize != undefined && file.size > maxSize) {
-						err = `File is > ${Math.floor(maxSize/1024)} KB, please choose something smaller`;
-					} else if (mimeTypes != undefined && !mimeTypes.includes(file.type)) {
-						err = `File should be ${mimeTypes.join(" or ")}, not ${file.type}.`;
-					} else {
-						onUpload(file);
-					}
-				}
-
-				if (err == null) {
-					setErr(null);
-					ev.currentTarget.setCustomValidity("");
+			multiple={multiple} onInput={ev => {
+			let err: string | null = null;
+			if (ev.currentTarget.files != null && ev.currentTarget.files.length > 0) {
+				const files = [...ev.currentTarget.files];
+				const totalSize = files.reduce((a, b) => a+b.size, 0);
+				const bad = mimeTypes != undefined && files.find(f => !mimeTypes.includes(f.type));
+				if (maxSize != undefined && totalSize > maxSize) {
+					err = `The files you uploaded take ${
+						formatFileSize(totalSize)
+					}, which is larger than the maximum of ${
+						formatFileSize(maxSize)
+					}. Please choose something smaller.`;
+				} else if (bad != false && bad != undefined) {
+					err = `File should be ${mimeTypes.join(" or ")}, not ${bad.type}.`;
 				} else {
-					setErr(err);
-					setErrOpen(true);
-					ev.currentTarget.setCustomValidity(err);
+					err = onUpload(files) ?? null;
 				}
-			}} />
+			}
+
+			if (err == null) {
+				setErr(null);
+				if (setValidity == true) ev.currentTarget.setCustomValidity("");
+			} else {
+				setErr(err);
+				setErrOpen(true);
+				if (setValidity == true) ev.currentTarget.setCustomValidity(err);
+			}
+		}} />
 		{err != null
 			&& <Modal bad title="Invalid file" open={errOpen} onClose={() => setErrOpen(false)}>
 				{err}

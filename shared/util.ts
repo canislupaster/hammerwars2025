@@ -103,6 +103,7 @@ export function parseExtra(str: string | null): unknown {
 }
 
 export const validNameRe = "^[A-Za-z0-9 _\\-]{2,30}$";
+export const validFilenameRe = "^[ -.0-\\[\\]-~]{1,100}$";
 export const validFullNameRe = "^(?! )[ \\x21-\\x7E\\p{L}\\p{M}\\p{N}\\p{P}]{2,50}(?<! )$";
 export const validDiscordRe = "^[A-Za-z0-9._]{2,32}$";
 export const maxFactLength = 300;
@@ -110,6 +111,7 @@ export const joinCodeRe = "^\\d{10}$";
 export const logoMimeTypes = ["image/jpeg", "image/png"] as const;
 export const logoMaxSize = 1024*1024*1;
 export const resumeMaxSize = 1024*1024*5;
+export const teamFilesMaxSize = 1024*1024*10;
 export const maxPromptLength = 1024*4;
 export const screenshotMaxWidth = 1920;
 export const teamLimit = 3;
@@ -205,6 +207,7 @@ export type ContestProperties = {
 			})[];
 		current: number;
 	};
+	daemonUpdate: { version: number; source: string } | null;
 };
 
 export type Session = { id: number; key: string };
@@ -309,6 +312,7 @@ export type API = {
 				funFact: string | null;
 				joinCode: string;
 				members: { name: string | null; email: string; id: number; inPerson: boolean | null }[];
+				files: { name: string; size: number }[];
 			} | null;
 			hasResume: boolean;
 		};
@@ -323,7 +327,8 @@ export type API = {
 		request: {
 			name: string;
 			funFact: string | null;
-			logo: { base64: string; mime: typeof logoMimeTypes[number] } | "remove" | null;
+			logo?: { base64: string; mime: typeof logoMimeTypes[number] } | "remove";
+			files?: { name: string; base64: string }[] | "remove";
 		};
 	};
 	joinTeam: { request: { joinCode: string }; response: { full: boolean } };
@@ -340,6 +345,7 @@ export type API = {
 	};
 	setTeams: { request: (Omit<AdminTeamData, "logoId"> | { id: number; delete: true })[] };
 	teamInfo: { request: { id: number }; response: AdminTeamData };
+	getTeamFile: { request: { id: number }; response: { name: string; base64: string } };
 	teamFeed: {
 		request: { id: number };
 		feed: true;
@@ -350,9 +356,12 @@ export type API = {
 				domJudgeActiveContest: DOMJudgeActiveContest;
 				teamProperties: TeamContestProperties;
 				lastAnnouncementId: number | null;
+				daemonVersion: number | null;
+				teamFiles: number[];
 			};
 		};
 	};
+	getDaemonSource: { response: { version: number; source: string } | null };
 	getAnnouncement: {
 		request: { team: number; afterId: number | null };
 		response: { id: number; title: string; body: string; time: number } | null;

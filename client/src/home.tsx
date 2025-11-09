@@ -1,7 +1,7 @@
 import { IconCalendar, IconChevronRight } from "@tabler/icons-preact";
 import { ComponentChildren } from "preact";
 import { lazy } from "preact-iso";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useErrorBoundary, useRef, useState } from "preact/hooks";
 import { twJoin, twMerge } from "tailwind-merge";
 import { fill, Scoreboard, timePlace } from "../../shared/util";
 import { useFeed, useRequest } from "./clientutil";
@@ -393,16 +393,20 @@ const LazyScoreboardStatus = lazy(() => import("./scoreboard").then(v => v.Score
 function Status() {
 	const [sc, setSc] = useState<Scoreboard>();
 	useFeed("scoreboard", setSc);
-	return <Collapse open={sc?.startTimeMs != undefined || sc?.endTimeMs != undefined}
-		className="md:w-[80%] w-full px-10">
-		<div className="flex flex-col lg:flex-row gap-2 items-center p-5 justify-center lg:justify-between w-full gap-y-3">
-			<div className="flex flex-row gap-2 items-center">
-				<span className="h-4 aspect-square rounded-full bg-red-500 animate-pulse" />
-				<Text className="pt-0.5" v="md">Contest status</Text>
+	// ignore feed error on disconnection
+	const [err] = useErrorBoundary(console.error) as [unknown, unknown];
+	return err != undefined
+		? <></>
+		: <Collapse open={sc?.startTimeMs != undefined || sc?.endTimeMs != undefined}
+			className="md:w-[80%] w-full px-10">
+			<div className="flex flex-col lg:flex-row gap-2 items-center p-5 justify-center lg:justify-between w-full gap-y-3">
+				<div className="flex flex-row gap-2 items-center">
+					<span className="h-4 aspect-square rounded-full bg-red-500 animate-pulse" />
+					<Text className="pt-0.5" v="md">Contest status</Text>
+				</div>
+				<LazyScoreboardStatus sc={sc} home />
 			</div>
-			<LazyScoreboardStatus sc={sc} home />
-		</div>
-	</Collapse>;
+		</Collapse>;
 }
 
 function Hero({ registerOnly }: { registerOnly?: boolean }) {

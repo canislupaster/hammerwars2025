@@ -53,7 +53,8 @@ async function parse<R>(t: z.ZodType<R>, c: Context): Promise<R> {
 	let res: z.ZodSafeParseResult<R>;
 	try {
 		res = t.safeParse(parseExtra(await c.req.raw.text()));
-	} catch {
+	} catch (e) {
+		console.error("parsing error", e);
 		throw err("could not parse body");
 	}
 	if (res.error) {

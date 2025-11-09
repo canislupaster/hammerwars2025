@@ -5,24 +5,13 @@ import { maxShirtSeed, randomShirtSeed } from "../../shared/genshirt";
 import { API, debounce, joinCodeRe, logoMaxSize, logoMimeTypes, maxPromptLength, PartialUserInfo,
 	resumeMaxSize, shirtSizes, teamLimit, UserInfo, validDiscordRe, validFullNameRe,
 	validNameRe } from "../../shared/util";
-import { apiBaseUrl, apiClient, useRequest } from "./clientutil";
+import { apiBaseUrl, apiClient, toBase64, useRequest } from "./clientutil";
 import type { GenShirtMessage, GenShirtResponse } from "./genshirtworker";
 import GenShirtWorker from "./genShirtWorker?worker";
 import { MainContainer } from "./main";
 import { Alert, Anchor, AppTooltip, bgColor, borderColor, Button, Card, Checkbox, Collapse,
 	ConfirmModal, containerDefault, Countdown, Divider, FileInput, IconButton, Input, Loading, Modal,
 	Select, Text, Textarea, useDisposable, useGoto, useTimeUntil, useToast, useValidity } from "./ui";
-
-const toBase64 = (file: File) =>
-	new Promise<string>((res, rej) => {
-		const reader = new FileReader();
-		reader.onload = () => {
-			const d = reader.result as string;
-			res(d.slice(d.indexOf(",")+1));
-		};
-		reader.onerror = rej;
-		reader.readAsDataURL(file);
-	});
 
 function GenerateTeamLogo({ refresh, disabled }: { refresh: () => void; disabled?: boolean }) {
 	const [generateLogoOpen, setGenerateLogoOpen] = useState(false);
@@ -259,7 +248,7 @@ export default function RegistrationEditor() {
 	const loading = info.loading || updateInfo.loading || updateTeam.loading || leaveTeam.loading
 		|| joinTeam.loading || changePassword.loading || updateResume.loading;
 	const team = data?.team ?? null;
-	const curTeam = team == null ? null : { name: team.name, funFact: team.funFact, logo: null };
+	const curTeam = team == null ? null : { name: team.name, funFact: team.funFact };
 
 	const [hasClosed, setHasClosed] = useState<boolean | null>(null);
 	useEffect(() => {
@@ -299,7 +288,7 @@ export default function RegistrationEditor() {
 	const toast = useToast();
 
 	const untilClose = useTimeUntil(
-		window.current?.data.closes != null ? window.current.data.closes/1000 : null,
+		window.current?.data.closes != null ? window.current.data.closes : null,
 	);
 
 	if (data == null || userInfo == null || window.current == null || hasClosed == null) {
@@ -328,7 +317,8 @@ export default function RegistrationEditor() {
 		<Card className="w-full max-w-2xl gap-3">
 			<Text v="lg">User information</Text>
 			{registrationClosed
-				? <Alert title="Registration has closed" txt="You can't submit information anymore." />
+				? <Alert title="Registration has closed"
+					txt="Sorry, we reached capacity early! You can't submit information anymore." />
 				: <>
 					{data.submitted
 						&& <Alert title="Unsubmit to edit your information" txt="Don't forget to resubmit!" />}
@@ -377,7 +367,7 @@ export default function RegistrationEditor() {
 								<div className="flex flex-row gap-2">
 									<FileInput disabled={loading} maxSize={resumeMaxSize}
 										mimeTypes={["application/pdf"]} onUpload={x => {
-										void toBase64(x).then(base64 => {
+										void toBase64(x[0]).then(base64 => {
 											updateResume.call({ type: "add", base64 });
 										});
 									}} />
@@ -545,7 +535,7 @@ export default function RegistrationEditor() {
 				<form onSubmit={ev => {
 					ev.preventDefault();
 					if (ev.currentTarget.reportValidity()) {
-						updateTeam.call({ name: createTeamName, funFact: null, logo: null });
+						updateTeam.call({ name: createTeamName, funFact: null });
 						setCreateTeamOpen(false);
 					}
 				}} className="contents">
@@ -620,7 +610,7 @@ export default function RegistrationEditor() {
 					</Text>
 					<div className="flex flex-row gap-2">
 						<FileInput disabled={registrationClosed} maxSize={logoMaxSize} mimeTypes={logoMimeTypes}
-							onUpload={file => {
+							onUpload={([file]) => {
 								void toBase64(file).then(base64 =>
 									updateTeam.call({
 										...curTeam,

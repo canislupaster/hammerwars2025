@@ -9,8 +9,8 @@ import z from "zod";
 import { randomShirtSeed } from "../shared/genshirt.ts";
 import { API, ContestProperties, DOMJudgeActiveContest, fill, getTeamLogoURL, logoMaxSize,
 	maxFactLength, maxPromptLength, resumeMaxSize, screenshotMaxWidth, shirtSizes,
-	TeamContestProperties, teamLimit, UserInfo, validDiscordRe, validFullNameRe,
-	validNameRe } from "../shared/util.ts";
+	TeamContestProperties, teamFilesMaxSize, teamLimit, UserInfo, validDiscordRe, validFilenameRe,
+	validFullNameRe, validNameRe } from "../shared/util.ts";
 import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getProperty,
 	propertiesChanged, PropertyChangeParam, setDb, setProperty, transaction, updateDb,
 	UserData } from "./db.ts";
@@ -87,6 +87,11 @@ const presentationSchema = z.object({
 		z.object({ type: z.literal("scoreboard") }),
 	]).array(),
 	current: z.int(),
+});
+
+const teamFileSchema = z.object({
+	name: z.string().regex(new RegExp(validFilenameRe)),
+	base64: z.base64(),
 });
 
 export async function makeRoutes(app: Hono<HonoEnv>) {
@@ -364,8 +369,10 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		validator: z.object({
 			name: nameSchema,
 			funFact: z.string().min(1).max(maxFactLength).nullable(),
-			logo: z.object({ base64: z.base64(), mime: z.enum(["image/png", "image/jpeg"]) }).nullable()
-				.or(z.literal("remove")),
+			logo: z.object({ base64: z.base64(), mime: z.enum(["image/png", "image/jpeg"]) }).or(
+				z.literal("remove"),
+			).optional(),
+			files: z.array(teamFileSchema).or(z.literal("remove")).optional(),
 		}),
 		handler: async (c, req) => {
 			const userId = await auth(c);
@@ -376,6 +383,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 				let teamId: number;
 				const common = { name: req.name, funFact: req.funFact };
+				const filesReq = req.files ?? null;
 				if (u.team != null) {
 					teamId = u.team;
 					await setDb(trx, "team", u.team, common);
@@ -397,7 +405,27 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					}
 					await setTeamLogo(trx, teamId, logo, req.logo.mime);
 				}
+
+				if (filesReq == "remove") {
+					await trx.deleteFrom("teamFile").where("team", "=", teamId).execute();
+				} else if (filesReq != null) {
+					let curSize = (await trx.selectFrom("teamFile").select(({ fn }) =>
+						fn.sum<number | null>(fn<number>("length", ["fileData"])).as("totalLength")
+					).where("team", "=", teamId).executeTakeFirstOrThrow()).totalLength ?? 0;
+
+					for (const file of filesReq) {
+						const data = Buffer.from(file.base64, "base64");
+						curSize += data.byteLength;
+						if (curSize > teamFilesMaxSize) {
+							throw err("maximum team file size exceeded");
+						}
+						await setDb(trx, "teamFile", null, { team: teamId, name: file.name, fileData: data });
+					}
+				}
+
+				teamChanged.emit(teamId);
 			});
+
 			domJudge.updateTeams();
 		},
 	});
@@ -476,6 +504,10 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 						"=",
 						team,
 					).executeTakeFirst();
+					const files = await trx.selectFrom("teamFile").select((
+						{ fn },
+					) => ["name", fn<number>("length", ["fileData"]).as("size")]).where("team", "=", team)
+						.execute();
 					return {
 						...data2,
 						team: {
@@ -490,6 +522,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 								id: v.id,
 								inPerson: v.data.submitted ? v.data.submitted.inPerson != null : null,
 							})),
+							files: files.map(file => ({ name: file.name, size: file.size })),
 						},
 					};
 				}
@@ -550,6 +583,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				visibleDirectories: z.string().array(),
 			}),
 			presentation: presentationSchema,
+			daemonUpdate: z.object({ version: z.int(), source: z.string() }).nullable(),
 		}).partial().strip(),
 		async handler(c, req) {
 			await keyAuth(c, true);
@@ -809,14 +843,18 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		handler: async function* handler(abort, c, { id }) {
 			await keyAuth(c, false);
 
-			const getCred = async () => {
+			const getTeamData = async () => {
 				const team = await transaction(trx => getDbCheck(trx, "team", id));
 				const domJudgeUser = team.domJudgeId != null
 					? domJudge.getTeamUsername(team.domJudgeId)
 					: null;
-				return domJudgeUser != null && team.domJudgePassword != null
+				const cred = domJudgeUser != null && team.domJudgePassword != null
 					? { user: domJudgeUser, pass: team.domJudgePassword }
 					: null;
+				const files = await transaction(trx =>
+					trx.selectFrom("teamFile").select("id").where("team", "=", id).execute()
+				);
+				return { domJudgeCredentials: cred, teamFiles: files.map(v => v.id) };
 			};
 
 			const getLastAnnouncement = async () => {
@@ -827,15 +865,15 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				))?.id ?? null;
 			};
 
-			type Update = { type: "cred" } | { type: "active"; active: DOMJudgeActiveContest } | {
+			type Update = { type: "teamChanged" } | { type: "active"; active: DOMJudgeActiveContest } | {
 				type: "props";
 				props: TeamContestProperties;
-			} | { type: "announcement"; id: number };
+			} | { type: "daemon"; version: number | null } | { type: "announcement"; id: number };
 
 			const emitter = new EventEmitter<Update>();
 
 			this.use(teamChanged.on(v => {
-				if (v == id) emitter.emit({ type: "cred" });
+				if (v == id) emitter.emit({ type: "teamChanged" });
 			}));
 
 			this.use(announcementEvent.on(({ team, id }) => {
@@ -853,6 +891,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			this.use(propertiesChanged.on(c => {
 				if (c.k == "team") {
 					emitter.emit({ type: "props", props: c.v ?? defaultTeamProps });
+				} else if (c.k == "daemonUpdate") {
+					emitter.emit({ type: "daemon", version: c.v?.version ?? null });
 				}
 			}));
 
@@ -860,10 +900,12 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 			// if i just wait there's a race thing which is really dumb
 			this.use(emitter.on(update => queue.push(update)));
-			const state = {
-				domJudgeCredentials: await getCred(),
+			let state = {
+				...await getTeamData(),
 				domJudgeActiveContest: domJudge.activeContest.v,
-				teamProperties: (await transaction(trx => getProperties(trx))).team ?? defaultTeamProps,
+				teamProperties: (await transaction(trx => getProperty(trx, "team"))) ?? defaultTeamProps,
+				daemonVersion: (await transaction(trx => getProperty(trx, "daemonUpdate")))?.version
+					?? null,
 				lastAnnouncementId: await getLastAnnouncement(),
 			};
 
@@ -874,9 +916,10 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 					await emitter.wait();
 					continue;
 				}
-				if (ev.type == "cred") state.domJudgeCredentials = await getCred();
+				if (ev.type == "teamChanged") state = { ...state, ...await getTeamData() };
 				else if (ev.type == "active") state.domJudgeActiveContest = ev.active;
 				else if (ev.type == "announcement") state.lastAnnouncementId = ev.id;
+				else if (ev.type == "daemon") state.daemonVersion = ev.version;
 				else state.teamProperties = ev.props;
 			}
 		},
@@ -911,6 +954,13 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		async handler(c, { id }) {
 			await keyAuth(c, false);
 			return await transaction(trx => toAdminTeam(trx, id));
+		},
+	});
+
+	makeRoute(app, "getDaemonSource", {
+		async handler(c) {
+			await keyAuth(c, false);
+			return await transaction(trx => getProperty(trx, "daemonUpdate"));
 		},
 	});
 
@@ -952,6 +1002,15 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		validator: z.object({ team: z.int(), problem: z.string() }),
 		async handler(_, { team, problem }) {
 			return await domJudge.getPublicSubmissionSource(team, problem);
+		},
+	});
+
+	makeRoute(app, "getTeamFile", {
+		validator: z.object({ id: z.int() }),
+		async handler(c, { id }) {
+			await keyAuth(c, false);
+			const file = await transaction(trx => getDbCheck(trx, "teamFile", id));
+			return { name: file.name, base64: file.fileData.toString("base64") };
 		},
 	});
 }

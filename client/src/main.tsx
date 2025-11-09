@@ -4,11 +4,11 @@ import { ComponentChildren, render } from "preact";
 import { lazy, LocationProvider, Route, Router, useLocation } from "preact-iso";
 import { useCallback, useEffect, useErrorBoundary, useMemo, useRef, useState } from "preact/hooks";
 import { twMerge } from "tailwind-merge";
-import { APIError, maxFactLength } from "../../shared/util";
+import { APIError } from "../../shared/util";
 import { LocalStorage, useRequest } from "./clientutil";
 import { Home } from "./home";
-import { Alert, Anchor, bgColor, Button, Card, Container, Divider, GotoContext, Input, Loading,
-	Text, Textarea, ThemeContext, useGoto, useTitle } from "./ui";
+import { Alert, Anchor, Button, Card, Container, GotoContext, Input, Loading, Text, ThemeContext,
+	useGoto, useTimeUntil, useTitle } from "./ui";
 
 export function Footer() {
 	return <div className="flex flex-col items-center w-full py-5 px-5">
@@ -51,6 +51,8 @@ const LazyRegistration = lazy(() => import("./registration").then(a => a.default
 function RegisterPage() {
 	const [email, setEmail] = useState("");
 	const req = useRequest({ route: "register" });
+	const window = useRequest({ route: "registrationWindow", initRequest: true });
+	const closesIn = useTimeUntil(window.current?.data.closes ?? null);
 	const goto = useGoto();
 
 	const { call, current } = useRequest({ route: "checkSession", throw: false });
@@ -84,20 +86,25 @@ function RegisterPage() {
 		: <MainContainer>
 			<Card className="w-full max-w-md gap-3">
 				<Text v="big" className="self-center">Register</Text>
-				{req.loading ? <Loading /> : <form onSubmit={ev => {
-					ev.preventDefault();
-					if (ev.currentTarget.reportValidity()) {
-						req.call({ email });
-					}
-				}} className="flex flex-col gap-3">
-					<Text v="smbold">Email</Text>
-					<Text v="dim" className="-mt-2">
-						Try using your personal email if you don't receive the verification link in your school
-						email.
-					</Text>
-					<Input value={email} valueChange={v => setEmail(v)} type="email" required />
-					<Button>Register</Button>
-				</form>}
+				{req.loading || window.loading
+					? <Loading />
+					: closesIn != null && closesIn < 0
+					? <Alert title="Registration has closed!"
+						txt="HammerWars has reached capacity. If you have any questions, please contact us." />
+					: <form onSubmit={ev => {
+						ev.preventDefault();
+						if (ev.currentTarget.reportValidity()) {
+							req.call({ email });
+						}
+					}} className="flex flex-col gap-3">
+						<Text v="smbold">Email</Text>
+						<Text v="dim" className="-mt-2">
+							Try using your personal email if you don't receive the verification link in your
+							school email.
+						</Text>
+						<Input value={email} valueChange={v => setEmail(v)} type="email" required />
+						<Button>Register</Button>
+					</form>}
 				<Text v="sm">
 					Already have an account? <Anchor onClick={() => goto("/login")}>Login instead</Anchor>
 				</Text>
@@ -105,7 +112,7 @@ function RegisterPage() {
 		</MainContainer>;
 }
 
-function useEmailVerification() {
+export function useEmailVerification() {
 	const loc = useLocation();
 	const { call, loading, ...verified } = useRequest({ route: "checkEmailVerify" });
 	useEffect(() => {
@@ -232,103 +239,11 @@ function LoginPage({ failed, done }: { failed: boolean; done?: () => void }) {
 	</MainContainer>;
 }
 
-function ConfirmAttendanceInner() {
-	const info = useRequest({ route: "getInfo", initRequest: true });
-	const c = { handler: () => info.call() };
-	const updateTeamReq = useRequest({ route: "setTeam", ...c });
-	const confirmReq = useRequest({ route: "confirmAttendance", ...c });
-	const unsubmitReq = useRequest({ route: "updateInfo", ...c });
-	const [funFact, setFunFact] = useState("");
-
-	const d = info.current;
-	useEffect(() => {
-		setFunFact(d?.data.team?.funFact ?? "");
-	}, [d]);
-
-	if (unsubmitReq.loading || confirmReq.loading || info.loading || d == null) return <Loading />;
-	const r = d?.data.submitted == false || d?.data.info.inPerson == null
-		? "cancelled"
-		: info.current.data.confirmedAttendance
-		? "confirmed"
-		: null;
-
-	if (r == "cancelled") {
-		return <>
-			<Text v="md">You are no longer registered for HammerWars</Text>
-			<Divider />
-			<Text v="bold">i'm actualy going to cry :(</Text>
-			<img src="/sad-sob.gif" className="mt-2" />
-			<Text className="mt-2">
-				If that's a mistake, you can <Anchor href="/register">register again</Anchor>.
-			</Text>
-		</>;
-	}
-
-	return <form onSubmit={ev => {
-		const confirm = ev.submitter?.getAttribute("name") != "cancel";
-		ev.preventDefault();
-		if (!ev.currentTarget.reportValidity()) return;
-		confirmReq.call();
-		if (confirm) {
-			if (d.data.team != null) {
-				updateTeamReq.call({
-					name: d.data.team.name,
-					funFact: funFact.length == 0 ? null : funFact,
-					logo: null,
-				});
-			}
-		} else {
-			unsubmitReq.call({ info: d.data.info, submit: false });
-		}
-	}} className="flex flex-col gap-2">
-		<Text v="big">Confirm your attendance</Text>
-		{info.current.data.team != null && <>
-			<Text>Fun fact about your team</Text>
-			<Text className="-mt-2" v="dim">
-				(Optional{funFact.length > 0 && `, ${funFact.length}/${maxFactLength}`})
-			</Text>
-			<Textarea value={funFact} onInput={ev => setFunFact(ev.currentTarget.value)} minLength={0}
-				maxLength={maxFactLength} />
-			<Text>Template code</Text>
-			<Text className="-mt-2" v="dim">
-				You'll have time during the practice contest to download whatever you want with full
-				internet access, but you can upload code now and avoid the pain of transferring files
-			</Text>
-		</>}
-		<div className="flex flex-row gap-2">
-			<Button className={bgColor.md} name="confirm">Confirm</Button>
-			<Button className={bgColor.red} name="cancel">Cancel</Button>
-		</div>
-		{r == "confirmed"
-			&& <Alert className={bgColor.green} title="Thanks for confirming!"
-				txt="We can't wait to see you there!" />}
-	</form>;
-}
-
-function ConfirmAttendance() {
-	const verified = useEmailVerification();
-	const createAccReq = useRequest({ route: "createAccount" });
-	useEffect(() => {
-		if (
-			verified.req != null && !verified.invalid && !createAccReq.loading
-			&& createAccReq.current == null
-		) {
-			createAccReq.call({ ...verified.req, password: null });
-		}
-	}, [createAccReq, verified]);
-
-	if (verified.req == null || createAccReq.loading) return <Loading />;
-	if (verified.invalid) return <ErrorPage errName="Invalid link." />;
-
-	return <MainContainer>
-		<ConfirmAttendanceInner />
-	</MainContainer>;
-}
-
 const LazyScoreboardPage = lazy(() => import("./scoreboard").then(v => v.default));
 const LazyPresentationPage = lazy(() => import("./presentation").then(v => v.default));
 const LazyClickerPage = lazy(() => import("./clicker").then(v => v.default));
 const LazySubmissionsPage = lazy(() => import("./submissions").then(v => v.default));
+const LazyConfirmAttendance = lazy(() => import("./confirm").then(v => v.default));
 
 const NotFound = () =>
 	<ErrorPage errName="Not found">
@@ -373,7 +288,7 @@ function InnerApp() {
 	return <Router>
 		<Route path="/" component={Home} />
 		<Route path="/register" component={RegisterPage} />
-		<Route path="/confirm" component={ConfirmAttendance} />
+		<Route path="/confirm" component={LazyConfirmAttendance} />
 		<Route path="/login" component={LoginPage} />
 		<Route path="/verify" component={VerifyPage} />
 		<Route path="/scoreboard" component={LazyScoreboardPage} />

@@ -3,12 +3,12 @@ import { Fragment } from "preact";
 import { useLocation } from "preact-iso";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import { twJoin } from "tailwind-merge";
-import { fill, Scoreboard } from "../../shared/util";
+import { Scoreboard } from "../../shared/util";
 import { simp, useFeed, useRequest } from "./clientutil";
 import { CodeBlock } from "./code";
 import { ErrorPage, MainContainer } from "./main";
-import { Alert, bgColor, borderColor, Button, Card, Divider, Input, Loading, Text, useGoto, useLg,
-	useMd, useTimeUntil } from "./ui";
+import { Alert, bgColor, borderColor, Button, Card, Divider, Input, Loading, Text, useLg,
+	useTimeUntil } from "./ui";
 
 function SubmissionBrowser(
 	{ team, problem, scoreboard, setTeam, setProblem }: {

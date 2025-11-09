@@ -166,3 +166,21 @@ export function useFeed<T extends keyof FeedAPI>(
 }
 
 export const simp = (x: string) => x.toLowerCase().replace(/[^a-z0-9\n]/g, "");
+
+export const toBase64 = (file: File) =>
+	new Promise<string>((res, rej) => {
+		const reader = new FileReader();
+		reader.onload = () => {
+			const d = reader.result as string;
+			res(d.slice(d.indexOf(",")+1));
+		};
+		reader.onerror = rej;
+		reader.readAsDataURL(file);
+	});
+
+export const formatFileSize = (size: number) =>
+	size >= 1024*1024
+		? `${Math.ceil(size/1024/1024)} MB`
+		: size >= 1024
+		? `${Math.ceil(size/1024)} KB`
+		: `${size} B`;

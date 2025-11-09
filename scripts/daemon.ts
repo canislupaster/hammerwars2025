@@ -3,6 +3,7 @@ import { parse } from "dotenv";
 import { Hono } from "hono";
 import { JSDOM } from "jsdom";
 import { ChildProcess, execFile, ExecOptionsWithStringEncoding, spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { copyFile, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -61,11 +62,15 @@ type Data = Partial<
 		lastAnnouncementId: number;
 		latestAnnouncementId: number | null;
 		lastScreenshot: number;
+		currentDaemonVersion: number | null;
+		latestDaemonVersion: number | null;
 		screenshotsEnabled: boolean;
 		lastState: { user: string; pass: string };
 		domJudgeCookies: Map<string, string>;
 		visibleDirectories: Set<string>;
 		firewall: boolean;
+		files: Map<number, string>;
+		latestFileIds: number[];
 		lastActive: DOMJudgeActiveContest;
 	}
 >;
@@ -88,7 +93,8 @@ if (await stat("data.json").catch(() => false) != false) {
 async function update(newData: Data) {
 	const old = data;
 	data = { ...data, ...newData };
-	await writeFile("data.json", stringifyExtra(data));
+	// no overlapping writes!
+	writeFileSync("data.json", stringifyExtra(data));
 	for (const upd of updater.values()) {
 		upd?.(old);
 	}
@@ -427,10 +433,12 @@ async function processFeed() {
 		await update({
 			firewall: event.state.teamProperties.firewallEnabled,
 			latestAnnouncementId: event.state.lastAnnouncementId,
+			latestFileIds: event.state.teamFiles,
 			visibleDirectories: vis,
 			screenshotsEnabled: event.state.teamProperties.screenshotsEnabled,
 			lastState: state,
 			lastActive: event.state.domJudgeActiveContest,
+			latestDaemonVersion: event.state.daemonVersion,
 		});
 	}
 }
@@ -439,8 +447,9 @@ register("bg", "feed", processFeed);
 
 FontLibrary.use("Oxanium", "./Oxanium-VariableFont_wght.ttf");
 
-async function setWallpaper() {
-	while (data.teamId == undefined) await waitForDataChange();
+async function setWallpaper(old: Data) {
+	if (data.teamId == undefined || old.teamId == data.teamId) return;
+
 	const info = await client.request("teamInfo", { id: data.teamId });
 	const w = 3900, h = 2340;
 	const canvas = new Canvas(w, h);
@@ -485,7 +494,7 @@ async function setWallpaper() {
 	await forever;
 }
 
-register("bg", "wallpaper", setWallpaper);
+register("update", "wallpaper", setWallpaper);
 
 async function copyRunner() {
 	const runPath = "/usr/local/bin/run";
@@ -514,7 +523,10 @@ async function announcement() {
 		afterId: data.lastAnnouncementId ?? null,
 	});
 
-	if (announcement == null) {
+	if (
+		announcement == null // prevent inf loop
+		|| (data.lastAnnouncementId != null && announcement.id <= data.lastAnnouncementId)
+	) {
 		console.error(
 			`expected announcement with id ${data.latestAnnouncementId} > ${
 				data.lastAnnouncementId ?? -1
@@ -531,6 +543,56 @@ async function announcement() {
 		"--title",
 		`${announcement.title}\n\nSent ${sec} seconds ago.`,
 	]);
+
+	await update({ ...data, lastAnnouncementId: announcement.id });
 }
 
 register("update", "announcement", announcement);
+
+async function files() {
+	// disallow file downloading when internet disabled
+	if (data.firewall == true) return;
+	const oldFileSet = new Set(data.files?.keys() ?? []);
+	const newFileSet = new Set(data.latestFileIds ?? []);
+	if (oldFileSet.symmetricDifference(newFileSet).size == 0) return;
+
+	const newFiles = new Map(data.files);
+	for (const deleteFile of oldFileSet.difference(newFileSet)) {
+		const name = data.files!.get(deleteFile)!;
+		await rm(join("/home/team", name), { force: true });
+		newFiles.delete(deleteFile);
+	}
+
+	for (const downloadFile of newFileSet.difference(oldFileSet)) {
+		const { name, base64 } = await client.request("getTeamFile", { id: downloadFile });
+		const path = join("/home/team", name);
+		await writeFile(path, Buffer.from(base64, "base64"));
+		await exec("chmod", ["a+rw", path]);
+		newFiles.set(downloadFile, name);
+	}
+
+	await update({ ...data, files: newFiles });
+}
+
+register("update", "files", files);
+
+// added hot patching just in case stuff breaks and i need to update all machines
+// but i hope i don't need this trash!
+async function updateDaemon() {
+	if (
+		data.latestDaemonVersion == undefined
+		|| (data.currentDaemonVersion == null && data.latestDaemonVersion == null)
+		|| (data.currentDaemonVersion != null && data.currentDaemonVersion >= data.latestDaemonVersion)
+	) return;
+
+	const daemonSource = await client.request("getDaemonSource");
+	if (daemonSource == null || daemonSource.version < data.latestDaemonVersion) {
+		throw new Error("mismatched daemon version during update");
+	}
+
+	await writeFile(import.meta.filename, daemonSource.source);
+	await update({ ...data, currentDaemonVersion: daemonSource.version });
+	process.execve!(process.execPath, process.argv.slice(1));
+}
+
+register("update", "update daemon", updateDaemon);
