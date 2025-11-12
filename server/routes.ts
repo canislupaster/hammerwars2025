@@ -630,6 +630,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			focusTeamId: z.int().nullable(),
 			team: z.object({
 				firewallEnabled: z.boolean(),
+				loginLocked: z.boolean(),
 				screenshotsEnabled: z.boolean(),
 				visibleDirectories: z.string().array(),
 			}),
@@ -964,6 +965,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				firewallEnabled: false,
 				screenshotsEnabled: false,
 				visibleDirectories: [],
+				loginLocked: true,
 			};
 
 			this.use(propertiesChanged.on(c => {

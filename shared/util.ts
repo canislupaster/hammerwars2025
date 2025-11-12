@@ -137,6 +137,7 @@ export type TeamContestProperties = {
 	firewallEnabled: boolean;
 	screenshotsEnabled: boolean;
 	visibleDirectories: string[];
+	loginLocked: boolean;
 };
 
 export type DuelLayout = "left" | "both" | "right";

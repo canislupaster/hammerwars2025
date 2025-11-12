@@ -46,8 +46,10 @@ function register(...params: RegisterParams) {
 			while (true) await params[2]();
 		});
 	} else {
-		void run(5, () => params[2]({}));
-		updater.add(old => void run(5, () => params[2](old)));
+		let lastRunning = run(5, () => params[2]({}));
+		updater.add(old => {
+			lastRunning = lastRunning.then(() => run(5, () => params[2](old)));
+		});
 	}
 }
 
@@ -76,6 +78,7 @@ type Data = Partial<
 		domJudgeCookies: Map<string, string>;
 		visibleDirectories: Set<string>;
 		firewall: boolean;
+		loginLocked: boolean;
 		files: Map<number, string>;
 		latestFileIds: number[];
 		lastActive: DOMJudgeActiveContest;
@@ -314,6 +317,13 @@ async function updateFirewall(old: Data) {
 
 register("update", "firewall", updateFirewall);
 
+async function updateLogin(old: Data) {
+	if (old.loginLocked == data.loginLocked) return;
+	await exec("passwd", [data.loginLocked == true ? "-l" : "--delete", "team"]);
+}
+
+register("update", "login", updateLogin);
+
 async function updateVisible(old: Data) {
 	if (data.visibleDirectories == undefined) {
 		update({ visibleDirectories: new Set() });
@@ -467,6 +477,7 @@ async function processFeed() {
 				screenshotsEnabled: event.state.teamProperties.screenshotsEnabled,
 				lastState: state,
 				lastActive: event.state.domJudgeActiveContest,
+				loginLocked: event.state.teamProperties.loginLocked,
 				latestDaemonVersion: event.state.daemonVersion,
 				latestPrinterAddress: event.state.printerName,
 			});
@@ -702,7 +713,7 @@ async function configurePrinter() {
 			`socket://${newPrinter.ip}:${newPrinter.port}`,
 		]);
 
-		await exec("lpoptions", ["-p", newPrinter.cupsName, "-o", "job-sheets=standard,none"]);
+		await exec("lpoptions", ["-p", newPrinter.cupsName, "-o", "job-sheets=none,none"]);
 		await exec("lpoptions", ["-d", newPrinter.cupsName]);
 		await exec("ufw", [
 			"--force",
@@ -715,6 +726,8 @@ async function configurePrinter() {
 		]);
 
 		update({ currentPrinter: newPrinter });
+	} else {
+		update({ currentPrinter: null });
 	}
 }
 
