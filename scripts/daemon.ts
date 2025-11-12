@@ -684,7 +684,6 @@ async function configurePrinter() {
 		);
 		await exec("lpadmin", ["-x", data.currentPrinter.cupsName]);
 		await exec("ufw", [
-			"--force",
 			"delete",
 			"allow",
 			"out",
@@ -715,15 +714,7 @@ async function configurePrinter() {
 
 		await exec("lpoptions", ["-p", newPrinter.cupsName, "-o", "job-sheets=none,none"]);
 		await exec("lpoptions", ["-d", newPrinter.cupsName]);
-		await exec("ufw", [
-			"--force",
-			"allow",
-			"out",
-			"to",
-			newPrinter.ip,
-			"port",
-			newPrinter.port.toString(),
-		]);
+		await exec("ufw", ["allow", "out", "to", newPrinter.ip, "port", newPrinter.port.toString()]);
 
 		update({ currentPrinter: newPrinter });
 	} else {
