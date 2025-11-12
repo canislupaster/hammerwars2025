@@ -15,26 +15,8 @@ import { EventEmitter, getDb, transaction } from "./db.ts";
 import "./routes.ts";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { env } from "./env.ts";
 import { makeRoutes } from "./routes.ts";
-
-export const env = z.parse(
-	z.object({
-		NOSEND_EMAIL: z.literal("1").optional(),
-		AWS_REGION: z.string(),
-		AWS_ACCESS_KEY_ID: z.string(),
-		AWS_SECRET_ACCESS_KEY: z.string(),
-		ROOT_URL: z.url(),
-		TRUSTED_PROXY: z.string().optional(),
-		ADMIN_API_KEY: z.string(),
-		CLIENT_API_KEY: z.string(),
-		OPENAI_API_KEY: z.string(),
-		DOMJUDGE_URL: z.url(),
-		DOMJUDGE_API_USER: z.string(),
-		DOMJUDGE_API_KEY: z.string(),
-		SCREENSHOT_PATH: z.string().optional(),
-	}),
-	process.env,
-);
 
 export type HonoEnv = { Variables: { session?: "clear" | Session } };
 export type Context = HonoContext<HonoEnv>;

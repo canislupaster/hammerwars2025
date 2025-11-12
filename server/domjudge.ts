@@ -5,7 +5,7 @@ import { ContestProperties, delay, DOMJudgeActiveContest, getTeamLogoURL, handle
 import { EventEmitter, getDb, getProperty, Mutable, propertiesChanged, transaction } from "./db";
 import { Account, BaseNotification, Judgement, Language, Notification, Problem, Submission,
 	Team } from "./domjudge_types";
-import { env } from "./main";
+import { env } from "./env";
 
 function relTimeToMs(relTime: string) {
 	const m = relTime.match(/^(?<neg>-)?(?<hr>\d+):(?<min>\d{2}):(?<sec>\d{2})(?:\.(?<ms>\d{3}))?$/);

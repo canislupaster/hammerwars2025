@@ -142,7 +142,7 @@ export type TeamContestProperties = {
 export type DuelLayout = "left" | "both" | "right" | "score";
 
 export type PresentationState = Readonly<
-	({ type: "none" | "scoreboard" } | { type: "countdown"; to: number; title: string } | {
+	({ type: "none" } | { type: "scoreboard" } | { type: "countdown"; to: number; title: string } | {
 		type: "submissions";
 		problems: {
 			label: string;
@@ -162,6 +162,20 @@ export type PresentationState = Readonly<
 	} | { type: "duel" }) & { liveOverlaySrc?: string }
 >;
 
+export type PresentationSlide = Readonly<
+	& { noTransition?: boolean }
+	& (PresentationState & { type: "countdown" | "none" | "image" | "video" | "scoreboard" | "live" }
+		| {
+			type: "submission";
+			scoreboard: Scoreboard;
+			problemLabel: string;
+			end: number;
+			data: Readonly<
+				(PresentationState & { type: "submissions" })["problems"][number]["solutions"][number]
+			>;
+		} | { type: "duel" } & DuelState)
+>;
+
 export type SubmissionRankings = {
 	problems: {
 		label: string;
@@ -179,7 +193,14 @@ export type SubmissionRankings = {
 	}[];
 	teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
 };
+
 export type DuelState = {
+	layout: DuelLayout;
+	problemLabels: string[];
+	players: { name: string; src?: string; solved: Set<string> }[];
+};
+
+export type DuelConfig = {
 	cfContestId: number;
 	layout: DuelLayout;
 	players: { name: string; cf: string; src?: string }[];
@@ -202,7 +223,7 @@ export type ContestProperties = {
 	team: TeamContestProperties;
 	organizerTeamId: number | null;
 	presentation: { queue: PresentationState[]; current: number };
-	duel: DuelState;
+	duel: DuelConfig;
 	live: { name: string; src: string; active: boolean; overlay: boolean }[];
 	daemonUpdate: { version: number; source: string } | null;
 };
@@ -387,16 +408,21 @@ export type API = {
 	presentation: {
 		feed: true;
 		request: { live: boolean };
-		response: PresentationState & { onlyOverlayChange?: boolean };
+		response: { type: "slide"; slide: PresentationSlide } | {
+			type: "overlay";
+			overlaySrc: string | null;
+		};
 	};
-	duel: { feed: true; response: DuelState };
 	screenshot: { request: { team: number; data: string; mac: string } };
 	getPreFreezeSolutions: {
 		request: { label: string; intendedSolution: string }[];
 		response: SubmissionRankings;
 	};
 	getPresentationQueue: {
-		response: ContestProperties["presentation"] & { live: ContestProperties["live"] };
+		response: ContestProperties["presentation"] & {
+			live: ContestProperties["live"];
+			duel: ContestProperties["duel"];
+		};
 	};
 };
 

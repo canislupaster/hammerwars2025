@@ -1,8 +1,11 @@
-import { ContestProperties, DuelState, PresentationState,
+import { createHash, randomBytes } from "node:crypto";
+import { env } from "node:process";
+import { ContestProperties, delay, DuelState, fill, PresentationSlide, PresentationState,
 	SubmissionRankings } from "../shared/util";
-import { getProperty, Mutable, propertiesChanged, transaction } from "./db";
-import { domJudge } from "./domjudge";
+import { EventEmitter, getProperty, Mutable, propertiesChanged, transaction } from "./db";
+import { DOMJudge, domJudge } from "./domjudge";
 import { openai } from "./main";
+import { fetchDispatcher } from "./proxies";
 
 export async function evalSolutionQuality(
 	source: string,
@@ -109,58 +112,218 @@ export async function evalSolutions(
 	}));
 }
 
-class Duel {
-	state = new Mutable<DuelState>(null);
+type CodeforcesResponse<T> = { status: "OK" | "FAILED"; result?: T; comment?: string };
+type CodeforcesStandingsResult = {
+	contest?: {
+		id: number;
+		name: string;
+		startTimeSeconds?: number;
+		durationSeconds?: number;
+		phase?: string;
+	};
+	problems: { index: string; name: string; rating?: number }[];
+	rows: {
+		penalty?: number;
+		party?: { members?: { handle: string }[] };
+		problemResults?: {
+			points: number;
+			bestSubmissionTimeSeconds?: number;
+			rejectedAttemptCount?: number;
+		}[];
+	}[];
+};
 
-	async #codeforces(path: string) {
-	}
-}
+type Event = "slide" | "liveSlide" | "liveOverlay" | "presentationProp" | "liveProp";
 
 class Presentation {
-	state = new Mutable<PresentationState>({ type: "none" });
-	liveState = new Mutable<PresentationState & { onlyOverlayChange?: boolean }>({ type: "none" });
-	async #loop() {
-		let [last, lastLive] = await transaction(async trx =>
-			[
-				await getProperty(trx, "presentation") ?? { queue: [], current: 0 },
-				await getProperty(trx, "live") ?? [],
-			] as const
-		);
+	slide: PresentationSlide = { type: "none" };
+	liveState: { slide: PresentationSlide; overlaySrc: string | null } = {
+		slide: { type: "none" },
+		overlaySrc: null,
+	};
 
-		let changed = true, liveChanged = true, lastActiveLiveSrc: string | null = null;
+	events = new EventEmitter<Event>();
+
+	async #codeforces<T>(
+		path: string,
+		params: Record<string, string>,
+		signal?: AbortSignal,
+	): Promise<T> {
+		const url = new URL(path, "https://codeforces.com/api/");
+		for (const k in params) url.searchParams.set(k, params[k]);
+
+		// wtf mike, Bearer token isn't good enough?
+		if (env.CF_API_KEY != null && env.CF_API_SECRET != null) {
+			url.searchParams.set("time", Math.floor(Date.now()/1000).toString());
+			url.searchParams.set("apiKey", env.CF_API_KEY);
+			const paramStr = [...url.searchParams.entries()].sort((a, b) =>
+				a[0] == b[0] && a[1] == b[1] ? 0 : a[0] < b[0] || a[0] == b[0] && a[1] < b[1] ? -1 : 1
+			).map(([k, v]) => `${k}=${v}`).join("&");
+
+			const rand = randomBytes(3).toString("hex");
+			const sig = createHash("SHA-512").update(
+				`${rand}/${path}?${paramStr}#${env.CF_API_SECRET}`,
+				"utf-8",
+			).digest().toString("hex");
+			url.searchParams.set("apiSig", `${rand}${sig}`);
+		}
+
+		return await fetchDispatcher<T>(
+			{},
+			async resp => {
+				if (!resp.ok) {
+					throw new Error(`Codeforces API error (${resp.status})`);
+				}
+				const data = await resp.json() as CodeforcesResponse<T>;
+				if (data.status != "OK" || data.result == undefined) {
+					throw new Error(data.comment ?? "Codeforces API returned an error");
+				}
+				return data.result;
+			},
+			url,
+			{ signal, headers: { accept: "application/json" } },
+		);
+	}
+
+	async #updateLive() {
+		const live = await transaction(trx => getProperty(trx, "live")) ?? [];
+		const activeLive = live.find(x => x.active);
+		const overlayLive = live.find(x => x.overlay);
+		const slide = activeLive != null
+			? (this.liveState.slide.type == "live" && activeLive.src == this.liveState.slide.src
+				? this.liveState.slide
+				: { type: "live", src: activeLive.src } as const)
+			: this.slide;
+		const overlaySrc = overlayLive?.src ?? null;
+		const old = this.liveState;
+		this.liveState = { slide, overlaySrc };
+		if (slide != old.slide) this.events.emit("liveSlide");
+		if (overlaySrc != old.overlaySrc) this.events.emit("liveOverlay");
+	}
+
+	async #setSlide(slide: PresentationSlide) {
+		this.slide = slide;
+		this.events.emit("slide");
+		await this.#updateLive();
+	}
+
+	async #controlPresentation(abort: AbortSignal) {
+		const queue = await transaction(trx => getProperty(trx, "presentation"))
+			?? { queue: [], current: 0 };
+		const state = queue.queue[queue.current];
+
+		if (state == null) {
+			await this.#setSlide({ type: "none" });
+		} else if (
+			state.type == "countdown" || state.type == "image" || state.type == "video"
+			|| state.type == "none" || state.type == "scoreboard" || state.type == "live"
+		) {
+			await this.#setSlide(state);
+		} else if (state.type == "submissions") {
+			const scoreboard = domJudge.scoreboard.v;
+			const slides = state.problems.flatMap(prob =>
+				prob.solutions.map(
+					sol => ({ data: sol, problemLabel: prob.label, scoreboard, type: "submission" } as const)
+				)
+			);
+
+			let i = 0;
+			const slideDur = 20_000;
+			while (!abort.aborted && slides.length > 0) {
+				const slide = slides[(i++)%slides.length];
+				await this.#setSlide({ ...slide, end: Date.now()+slideDur });
+				await delay(slideDur, abort);
+			}
+		} else if (state.type == "duel") {
+			let first = true;
+			while (!abort.aborted) {
+				const duelCfg = await transaction(trx => getProperty(trx, "duel"));
+				if (duelCfg == null) {
+					await this.#setSlide({ type: "none" });
+				} else {
+					const standings = await this.#codeforces<CodeforcesStandingsResult>("contest.standings", {
+						contestId: `${duelCfg.cfContestId}`,
+						handles: duelCfg.players.map(v => v.cf).join(";"),
+					});
+
+					const standingsByPlayer = new Map(
+						standings.rows.flatMap(v =>
+							(v.party?.members ?? []).map((
+								{ handle },
+							) => [
+								handle,
+								v.problemResults?.map((x, i) => ({ i, x })).filter(x =>
+									x.x.bestSubmissionTimeSeconds != null && x.x.points > 0
+								).map(({ x, i }) => ({
+									problemI: i,
+									time: x.bestSubmissionTimeSeconds!,
+									first: false,
+								})) ?? [],
+							])
+						),
+					);
+
+					for (
+						const solves of Map.groupBy([...standingsByPlayer.values()].flat(), v => v.problemI)
+							.values()
+					) {
+						solves.sort((u, v) => u.time-v.time);
+						if (solves.length > 0) solves[0].first = true;
+					}
+
+					await this.#setSlide({
+						type: "duel",
+						layout: duelCfg.layout,
+						problemLabels: standings.problems.map(v => v.index),
+						players: duelCfg.players.map(v => ({
+							...v,
+							solved: new Set(
+								(standingsByPlayer.get(v.cf)?.values() ?? []).filter(x => x.first).map(u =>
+									standings.problems[u.problemI].index
+								),
+							),
+						})),
+						noTransition: !first,
+					});
+
+					first = false;
+				}
+
+				await delay(500, abort);
+			}
+		}
+	}
+
+	async #loop() {
+		let lastControl: [Promise<void>, AbortController] | null = null;
 		propertiesChanged.on(c => {
 			if (c.k == "presentation") {
-				last = c.v;
-				changed = true;
+				this.events.emit("presentationProp");
 			} else if (c.k == "live") {
-				lastLive = c.v;
-				liveChanged = true;
+				this.events.emit("liveProp");
 			}
 		});
 
+		const evQueue: Event[] = [];
+		this.events.on(x => evQueue.push(x));
+
 		while (true) {
 			try {
-				const newState = changed;
-				while (changed) {
-					changed = false;
-					liveChanged = true;
-					this.state.v = last.queue[last.current] ?? { type: "none" };
+				while (true) {
+					const ev = evQueue.shift();
+					if (ev == null) break;
+					if (ev == "liveProp" || ev == "liveOverlay") await this.#updateLive();
+					else if (ev == "presentationProp") {
+						if (lastControl != null) {
+							lastControl[1].abort();
+							await lastControl[0];
+						}
+						const abort2 = new AbortController();
+						const prom = this.#controlPresentation(abort2.signal);
+						lastControl = [prom, abort2];
+					}
 				}
-
-				if (liveChanged) {
-					liveChanged = false;
-					const activeLive = lastLive.find(x => x.active);
-					const overlayLive = lastLive.find(x => x.overlay);
-					const onlyOverlayChange = !newState && lastActiveLiveSrc == activeLive?.src;
-					lastActiveLiveSrc = activeLive?.src ?? null;
-					this.liveState.v = {
-						...activeLive != null ? { type: "live", src: activeLive.src } : this.state.v,
-						liveOverlaySrc: overlayLive?.src,
-						onlyOverlayChange,
-					};
-				}
-
-				await propertiesChanged.waitFor(x => x.k == "presentation" || x.k == "live");
+				await this.events.wait();
 			} catch (e) {
 				console.error("presentation error", e);
 			}
@@ -173,5 +336,3 @@ class Presentation {
 
 export const presentation = new Presentation();
 presentation.start();
-
-export const duel = new Duel();

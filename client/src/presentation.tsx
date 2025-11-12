@@ -5,8 +5,9 @@ import { twJoin } from "tailwind-merge";
 
 import { useLocation } from "preact-iso";
 import { add, add3, mul, mul3, rot, V2, V3 } from "../../shared/geo";
-import { badHash, delay, fill, PresentationState, Scoreboard } from "../../shared/util";
-import { apiBaseUrl, apiClient } from "./clientutil";
+import { badHash, delay, fill, PresentationSlide, PresentationState,
+	Scoreboard } from "../../shared/util";
+import { apiBaseUrl, apiClient, useFeed } from "./clientutil";
 import { CodeBlock } from "./code";
 import { Pattern3, PatternBg } from "./home";
 import ScoreboardPage from "./scoreboard";
@@ -173,52 +174,7 @@ function PresentationTransition({ refs, ids }: ReturnType<typeof usePresentation
 	</svg>;
 }
 
-type Slide = Readonly<
-	& { noTransition?: boolean }
-	& (PresentationState & { type: "countdown" | "none" | "image" | "video" | "scoreboard" | "live" }
-		| {
-			type: "submission";
-			scoreboard: Scoreboard;
-			problemLabel: string;
-			end: number;
-			data: Readonly<
-				(PresentationState & { type: "submissions" })["problems"][number]["solutions"][number]
-			>;
-		})
->;
-
-async function controlPresentation(
-	state: PresentationState,
-	setSlide: (s: Slide) => void,
-	abort: AbortSignal,
-) {
-	if (
-		state.type == "countdown" || state.type == "image" || state.type == "video"
-		|| state.type == "none" || state.type == "scoreboard" || state.type == "live"
-	) {
-		setSlide(state);
-	} else if (state.type == "submissions") {
-		const scoreboard = await apiClient.request("getScoreboard");
-		const slides = state.problems.flatMap(prob =>
-			prob.solutions.map(
-				sol => ({ data: sol, problemLabel: prob.label, scoreboard, type: "submission" } as const)
-			)
-		);
-
-		let i = 0;
-		const slideDur = 20_000;
-		while (!abort.aborted && slides.length > 0) {
-			const slide = slides[(i++)%slides.length];
-			setSlide({ ...slide, end: Date.now()+slideDur });
-			await delay(slideDur, abort);
-		}
-	}
-	if (!abort.aborted) {
-		await new Promise(res => abort.addEventListener("abort", res));
-	}
-}
-
-function PresentationCountdown({ slide }: { slide: Slide & { type: "countdown" } }) {
+function PresentationCountdown({ slide }: { slide: PresentationSlide & { type: "countdown" } }) {
 	const t = useTimeUntil(slide.to)!;
 	return <div className="flex flex-col gap-3 justify-center items-center">
 		<div className="flex flex-row items-start gap-3">
@@ -229,7 +185,7 @@ function PresentationCountdown({ slide }: { slide: Slide & { type: "countdown" }
 	</div>;
 }
 
-function SubmissionSlide({ slide }: { slide: Slide & { type: "submission" } }) {
+function SubmissionSlide({ slide }: { slide: PresentationSlide & { type: "submission" } }) {
 	const probName = slide.scoreboard.problemNames.get(slide.problemLabel);
 	const team = slide.scoreboard.teams.get(slide.data.team);
 	const langColor = chipColors[chipColorKeys[badHash(slide.data.language)%chipColorKeys.length]];
@@ -308,7 +264,7 @@ function SubmissionSlide({ slide }: { slide: Slide & { type: "submission" } }) {
 }
 
 function VideoSlide(
-	{ slide, active }: { slide: Slide & { type: "video" | "live" }; active: boolean },
+	{ slide, active }: { slide: PresentationSlide & { type: "video" | "live" }; active: boolean },
 ) {
 	const ref = useRef<HTMLVideoElement>(null);
 	useEffect(() => {
@@ -318,7 +274,7 @@ function VideoSlide(
 	return <video src={slide.src} ref={ref} muted={!active} className="max-h-full max-w-full" />;
 }
 
-function PresentationSlide({ slide, active }: { slide: Slide; active: boolean }) {
+function PresentationSlideView({ slide, active }: { slide: PresentationSlide; active: boolean }) {
 	let inner: ComponentChildren;
 	if (slide.type == "none") inner = <Text v="md">Please wait...</Text>;
 	else if (slide.type == "countdown") inner = <PresentationCountdown slide={slide} />;
@@ -327,15 +283,16 @@ function PresentationSlide({ slide, active }: { slide: Slide; active: boolean })
 	else if (slide.type == "video" || slide.type == "live") {
 		inner = <VideoSlide slide={slide} active={active} />;
 	} else if (slide.type == "scoreboard") inner = <></>;
-	else return slide.type satisfies never;
+	else return slide satisfies never;
 	return <div className="flex flex-col items-center justify-center w-full h-full">{inner}</div>;
 }
 
 function PresentationOverlay({ src, active }: { src: string; active: boolean }) {
 	const [transitionStart, setStart] = useState<number>(0);
+	const last = useRef<{ src: string; active: boolean } | null>(null);
 	useLayoutEffect(() => {
 		const srcChange = active && last.current?.active == true && last.current.src != src;
-		if (last.current == null || last.current.active != active || srcChange) {
+		if ((last.current?.active ?? false) != active || srcChange) {
 			if (active) {
 				setState(
 					o => [
@@ -350,7 +307,6 @@ function PresentationOverlay({ src, active }: { src: string; active: boolean }) 
 		last.current = { src, active };
 	}, [active, src]);
 	const transition = usePresentationTransition({ simple: true, start: transitionStart });
-	const last = useRef<{ src: string; active: boolean } | null>(null);
 	const [state, setState] = useState<[number, string, string | null]>([0, src, null]);
 
 	return <div className="absolute left-10 bottom-30 drop-shadow-black drop-shadow-xl">
@@ -372,7 +328,7 @@ export default function Presentation() {
 		start: performance.now(),
 		hold: true,
 	}));
-	const [slides, setSlides] = useState<[number, Slide[]]>([0, []]);
+	const [slides, setSlides] = useState<[number, PresentationSlide[]]>([0, []]);
 	const { refs, ids } = usePresentationTransition({
 		...transitionParam,
 		onDone: useCallback(() => {
@@ -383,7 +339,7 @@ export default function Presentation() {
 		}, [slides]),
 	});
 
-	const setSlide = useCallback((s2: Slide) => {
+	const setSlide = useCallback((s2: PresentationSlide) => {
 		if (s2.noTransition == true) {
 			setSlides(s => [s[0], [...s[1].slice(0, s[1].length-1), s2]]);
 		} else {
@@ -397,43 +353,22 @@ export default function Presentation() {
 	}, [slides, transitionParam.hold]);
 
 	const loc = useLocation();
-	const isLive = "live" in loc.query;
 	const [overlay, setOverlay] = useState<{ src: string; active: boolean } | null>(null);
 
-	const fun = useAsync(useCallback(async (abort: AbortSignal) => {
-		let lastControl: [Promise<void>, AbortController] | null = null;
-		for await (const s of apiClient.feed("presentation", { live: isLive }, abort)) {
-			if (lastControl != null) {
-				lastControl[1].abort();
-				await lastControl[0];
-			}
-			setOverlay(old =>
-				s.liveOverlaySrc != null
-					? { src: s.liveOverlaySrc, active: true }
-					: old
-					? { src: old.src, active: false }
-					: null
-			);
-			if (s.onlyOverlayChange != true) {
-				const abort2 = new AbortController();
-				const prom = controlPresentation(s, setSlide, abort2.signal);
-				lastControl = [prom, abort2];
-			}
-		}
-		if (lastControl != null) {
-			lastControl[1].abort();
-			await lastControl[0];
-		}
-	}, [isLive, setSlide]));
-
-	const abortRef = useRef<AbortController>(null);
-	useEffect(() => {
-		abortRef.current = new AbortController();
-		return () => abortRef.current?.abort();
-	}, []);
-	useEffect(() => {
-		if (!fun.loading && abortRef.current) fun.run(abortRef.current.signal);
-	}, [fun]);
+	useFeed(
+		"presentation",
+		useCallback(up => {
+			if (up.type == "slide") setSlide(up.slide);
+			else {setOverlay(old =>
+					up.overlaySrc != null
+						? { src: up.overlaySrc, active: true }
+						: old
+						? { src: old.src, active: false }
+						: null
+				);}
+		}, [setSlide]),
+		useMemo(() => ({ live: "live" in loc.query }), [loc.query]),
+	);
 
 	if (slides[1].length == 1 && slides[1][0].type == "scoreboard") {
 		return <ScoreboardPage />;
@@ -480,13 +415,13 @@ export default function Presentation() {
 						)} style={slides[1].length == 1
 						? undefined
 						: { maskImage: `url("#${ids.fromId}"), url("#${ids.fromSubId}")` }}>
-						<PresentationSlide slide={slides[1][0]} active={slides[1].length == 1} />
+						<PresentationSlideView slide={slides[1][0]} active={slides[1].length == 1} />
 					</div>}
 				{slides[1].length > 1
 					&& <div key={slides[0]+1}
 						className="absolute left-0 right-0 top-0 bottom-0 z-10 mask-subtract animate-fade-in"
 						style={{ maskImage: `url("#${ids.toId}"), url("#${ids.toSubId}")` }}>
-						<PresentationSlide slide={slides[1][1]} active={true} />
+						<PresentationSlideView slide={slides[1][1]} active={true} />
 					</div>}
 				<PresentationTransition refs={refs} ids={ids} />
 			</div>

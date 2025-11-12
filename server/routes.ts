@@ -16,9 +16,10 @@ import { DBTransaction, EventEmitter, getDb, getDbCheck, getProperties, getPrope
 	UserData } from "./db.ts";
 import { domJudge } from "./domjudge.ts";
 import { makeVerificationEmail } from "./email.ts";
-import { auth, Context, env, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai,
-	rootUrl, sesClient } from "./main.ts";
-import { duel, evalSolutions, presentation } from "./presentation.ts";
+import { env } from "./env.ts";
+import { auth, Context, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai, rootUrl,
+	sesClient } from "./main.ts";
+import { evalSolutions, presentation } from "./presentation.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
@@ -127,7 +128,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				url.searchParams.append("id", newId.toString());
 				url.searchParams.append("key", verifyKey.toString("hex"));
 
-				if (env["NOSEND_EMAIL"] == "1") {
+				if (env.NOSEND_EMAIL == "1") {
 					console.log(`${req.email} verification link: ${url.href}`);
 				} else {
 					const response = await sesClient.send(
@@ -1042,10 +1043,25 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		feed: true,
 		validator: z.object({ live: z.boolean() }),
 		handler: async function* handler(signal, _c, req) {
-			const x = req.live ? presentation.liveState : presentation.state;
-			while (!signal.aborted) {
-				yield x.v;
-				await x.change.wait(signal);
+			if (req.live) {
+				yield { type: "slide", slide: presentation.liveState.slide };
+				yield { type: "overlay", overlaySrc: presentation.liveState.overlaySrc };
+				while (!signal.aborted) {
+					const ty = await presentation.events.waitFor(
+						x => x == "liveSlide" || x == "liveOverlay",
+						signal,
+					);
+					if (ty == "liveOverlay") {
+						yield { type: "overlay", overlaySrc: presentation.liveState.overlaySrc };
+					} else if (ty == "liveSlide") {
+						yield { type: "slide", slide: presentation.liveState.slide };
+					}
+				}
+			} else {
+				while (!signal.aborted) {
+					yield { type: "slide", slide: presentation.slide };
+					await presentation.events.waitFor(x => x == "slide", signal);
+				}
 			}
 		},
 	});
@@ -1053,10 +1069,15 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	makeRoute(app, "getPresentationQueue", {
 		async handler(c) {
 			await keyAuth(c, true);
-			return await transaction(async trx => ({
-				...await getProperty(trx, "presentation") ?? { queue: [], current: 0 },
-				live: await getProperty(trx, "live") ?? [],
-			}));
+			return await transaction(async trx => {
+				const presentationState = await getProperty(trx, "presentation")
+					?? { queue: [], current: 0 };
+				return {
+					...presentationState,
+					live: await getProperty(trx, "live") ?? [],
+					duel: await getProperty(trx, "duel"),
+				};
+			});
 		},
 	});
 
@@ -1089,16 +1110,6 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			await keyAuth(c, false);
 			const file = await transaction(trx => getDbCheck(trx, "teamFile", id));
 			return { name: file.name, base64: file.fileData.toString("base64") };
-		},
-	});
-
-	makeRoute(app, "duel", {
-		feed: true,
-		handler: async function* handler(signal, _c) {
-			while (!signal.aborted) {
-				yield duel.state.v;
-				await duel.state.change.wait(signal);
-			}
 		},
 	});
 }

@@ -4,14 +4,16 @@ import { twJoin } from "tailwind-merge";
 import { ContestProperties } from "../../shared/util";
 import { apiKeyClient, LocalStorage, useRequest } from "./clientutil";
 import { MainContainer } from "./main";
-import { bgColor, borderColor, Button, Card, Divider, Input, Loading, Text } from "./ui";
+import { bgColor, borderColor, Button, capitalize, Card, Divider, Input, Loading,
+	Text } from "./ui";
 
 function ClickerQueueItem(
-	{ v, active, jump, loading }: {
+	{ v, active, jump, loading, duel }: {
 		v: ContestProperties["presentation"]["queue"][number];
 		active: boolean;
 		jump: () => void;
 		loading: boolean;
+		duel: ContestProperties["duel"];
 	},
 ) {
 	let title: string;
@@ -38,12 +40,14 @@ function ClickerQueueItem(
 		details = [["Source", v.src], ["Logo", v.logo ?? "(none)"]];
 	} else if (v.type == "duel") {
 		title = "Duel";
-		details = [["Contest ID", v.cfContestId], ["Layout", v.layout], [
-			"Players",
-			v.players.map(x => x.name).join(", "),
-		]];
-	} else if (v.type == "scoreboard") {
-		title = "Scoreboard";
+		details = duel == null
+			? [["Status", "Not configured"]]
+			: [["Contest ID", duel.cfContestId], ["Layout", duel.layout], [
+				"Players",
+				duel.players.map(x => x.name).join(", "),
+			]];
+	} else if (v.type == "none" || v.type == "scoreboard") {
+		title = v.type == "none" ? "Blank" : "Scoreboard";
 	} else {
 		return v satisfies never;
 	}
@@ -122,6 +126,7 @@ function ClickerQueue() {
 	};
 
 	const l = data == null || setProperties.loading;
+	const duel = data?.duel;
 
 	return <>
 		<Text v="md">Queue</Text>
@@ -132,9 +137,10 @@ function ClickerQueue() {
 			: <div className="flex flex-col gap-2 w-full max-h-[70dvh] overflow-auto relative"
 				ref={queueRef}>
 				{data.queue.map((v, i) =>
-					<ClickerQueueItem key={i} v={v} loading={l} active={i == data.current} jump={() => {
-						move(i-data.current);
-					}} />
+					<ClickerQueueItem key={i} v={v} loading={l} active={i == data.current} duel={data.duel}
+						jump={() => {
+							move(i-data.current);
+						}} />
 				)}
 			</div>}
 		<div className="flex flex-row flex-wrap gap-2 w-full justify-between">
@@ -176,6 +182,20 @@ function ClickerQueue() {
 					<video src={v.src} autoplay muted key={v.src} className="max-h-[20dvh]" />
 				</Card>))}
 		</div>
+		{duel != null && <>
+			<Text v="md">Duel layout</Text>
+			<div className="flex flex-row flex-wrap gap-2">
+				{(["left", "both", "right", "score"] as const).map(layout =>
+					<Button key={layout} loading={l}
+						className={twJoin(layout == data?.duel?.layout && bgColor.highlight)} onClick={() => {
+						setProperties.call({ duel: { ...duel, layout } });
+					}}>
+						{layout[0].toUpperCase()}
+						{layout.slice(1)}
+					</Button>
+				)}
+			</div>
+		</>}
 	</>;
 }
 
