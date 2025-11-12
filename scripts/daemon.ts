@@ -583,17 +583,6 @@ async function copyRunner() {
 
 register("bg", "copy runner", copyRunner);
 
-const cupsFilterPath = "/usr/lib/cups/filter/bannerfilter";
-
-async function cupsFilter() {
-	await copyFile("./bannerfilter", cupsFilterPath);
-	await exec("chmod", ["a=rx", cupsFilterPath]);
-	console.log("copied banner filter");
-	await forever;
-}
-
-register("bg", "cups filter", cupsFilter);
-
 async function announcement() {
 	if (
 		data.latestAnnouncementId == null
