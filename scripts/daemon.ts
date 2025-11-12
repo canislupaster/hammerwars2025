@@ -53,7 +53,7 @@ function register(...params: RegisterParams) {
 
 function restart(): never {
 	// this definitely stops the process but it seems like systemd is still restarting it very funny (i don't care 🤓)
-	return process.execve!(process.execPath, process.argv.slice(1));
+	return process.execve!(process.execPath, [...process.execArgv, ...process.argv.slice(1)]);
 }
 
 const client = new APIClient(process.env["API_URL"]!, {
@@ -79,7 +79,8 @@ type Data = Partial<
 		files: Map<number, string>;
 		latestFileIds: number[];
 		lastActive: DOMJudgeActiveContest;
-		printerName: string | null;
+		currentPrinter: { ip: string; cupsName: string; port: number; address: string } | null;
+		latestPrinterAddress: string | null;
 	}
 >;
 
@@ -467,6 +468,7 @@ async function processFeed() {
 				lastState: state,
 				lastActive: event.state.domJudgeActiveContest,
 				latestDaemonVersion: event.state.daemonVersion,
+				latestPrinterAddress: event.state.printerName,
 			});
 		}
 	} catch (err: unknown) {
@@ -661,11 +663,59 @@ async function updateDaemon() {
 
 register("update", "update daemon", updateDaemon);
 
-// not sure if this works but why not, does nothing unless i tell it to
-async function setDefaultPrinter(old: Data) {
-	if (data.printerName != old?.printerName && data.printerName != null) {
-		await exec("lpadmin", ["-d", data.printerName]);
+const printerName = "printer";
+async function configurePrinter() {
+	if ((data.latestPrinterAddress ?? null) == (data.currentPrinter?.address ?? null)) return;
+
+	if (data.currentPrinter != null) {
+		console.log(
+			`removing printer ${data.currentPrinter.cupsName} at ${data.currentPrinter.address}`,
+		);
+		await exec("lpadmin", ["-x", data.currentPrinter.cupsName]);
+		await exec("ufw", [
+			"--force",
+			"delete",
+			"allow",
+			"out",
+			"to",
+			data.currentPrinter.ip,
+			"port",
+			data.currentPrinter.port.toString(),
+		]);
+	}
+
+	if (data.latestPrinterAddress != null) {
+		const ipPort = data.latestPrinterAddress.split(":");
+		const ip = ipPort[0];
+		const port = ipPort.length == 1 ? 9100 : Number(ipPort[1]);
+		if (!isFinite(port)) throw new Error(`invalid printer port ${port}`);
+		const newPrinter = { cupsName: printerName, ip, port, address: data.latestPrinterAddress };
+		console.log(
+			`adding printer ${newPrinter.cupsName} at ${newPrinter.address} (ip ${newPrinter.ip}, port ${newPrinter.port})`,
+		);
+
+		await exec("lpadmin", [
+			"-p",
+			newPrinter.cupsName,
+			"-E",
+			"-v",
+			`socket://${newPrinter.ip}:${newPrinter.port}`,
+		]);
+
+		await exec("lpoptions", ["-p", newPrinter.cupsName, "-o", "job-sheets=standard,none"]);
+		await exec("lpoptions", ["-d", newPrinter.cupsName]);
+		await exec("ufw", [
+			"--force",
+			"allow",
+			"out",
+			"to",
+			newPrinter.ip,
+			"port",
+			newPrinter.port.toString(),
+		]);
+
+		update({ currentPrinter: newPrinter });
 	}
 }
 
-register("update", "default printer", setDefaultPrinter);
+register("update", "printer", configurePrinter);

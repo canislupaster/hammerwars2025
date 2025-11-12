@@ -69,6 +69,7 @@ const presentationSubmissionsSchema = z.object({
 		}),
 	),
 	teamVerdicts: z.map(z.number(), z.map(z.string(), z.number())),
+	verdictTime: z.map(z.string(), z.array(z.object({ timeFraction: z.number(), ac: z.boolean() }))),
 });
 
 const duelConfigPlayer = z.object({ name: z.string(), cf: z.string(), src: z.string().optional() });
@@ -1094,7 +1095,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		validator: z.object({ label: z.string(), intendedSolution: z.string() }).array(),
 		async handler(c, req) {
 			await keyAuth(c, true);
-			const [subs, verdicts] = await domJudge.getPreFreezeSolutions();
+			const [subs, verdicts, verdictTime] = await domJudge.getPreFreezeSolutions();
 			const problems = (await Promise.all(
 				Map.groupBy(subs, k => k.problem).entries().map(async ([label, subs]) => {
 					return { label, solutions: await evalSolutions(subs, req) };
@@ -1102,7 +1103,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			)).sort((a, b) =>
 				a.label < b.label ? -1 : 1
 			);
-			return { problems, teamVerdicts: verdicts };
+			return { problems, teamVerdicts: verdicts, verdictTime };
 		},
 	});
 

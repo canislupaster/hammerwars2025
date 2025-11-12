@@ -3,7 +3,7 @@ import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Context as HonoContext, Hono } from "hono";
-import { streamText } from "hono/streaming";
+import { stream, streamText } from "hono/streaming";
 import { ContentfulStatusCode } from "hono/utils/http-status";
 import { Buffer } from "node:buffer";
 import { argon2, randomBytes, timingSafeEqual } from "node:crypto";
@@ -107,7 +107,14 @@ export function makeRoute<K extends keyof API>(app: Hono<HonoEnv>, route: K, dat
 
 		const req = "validator" in data ? await parse(data.validator, c) : undefined;
 		if (data.feed == true) {
-			return streamText(c, async api => {
+			// use event-stream since more standard, though this requires us to use normal stream instead of streamText (which stupidly sets content type to plain text)
+			c.header("Content-Type", "text/event-stream");
+			c.header("Transfer-Encoding", "chunked");
+			c.header("Connection", "keep-alive");
+			c.header("X-Accel-Buffering", "no");
+			c.header("X-Content-Type-Options", "nosniff");
+
+			return stream(c, async api => {
 				const disp = new DisposableStack();
 				try {
 					const abort = new AbortController();

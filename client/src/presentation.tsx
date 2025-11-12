@@ -1,8 +1,8 @@
-import { ComponentChildren, HTMLAttributes, JSX } from "preact";
+import { ComponentChildren } from "preact";
 import { useLocation } from "preact-iso";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef,
 	useState } from "preact/hooks";
-import { twJoin, twMerge } from "tailwind-merge";
+import { twJoin } from "tailwind-merge";
 import { add, add3, mul, mul3, rot, V2, V3 } from "../../shared/geo";
 import { badHash, DuelState, fill, PresentationSlide } from "../../shared/util";
 import { apiBaseUrl, useFeed } from "./clientutil";
@@ -10,8 +10,7 @@ import { CodeBlock } from "./code";
 import { Pattern3, PatternBg } from "./home";
 import ScoreboardPage, { useChanged } from "./scoreboard";
 import { Scroller, useScroll } from "./scroller";
-import { bgColor, chipColorKeys, chipColors, Countdown, Loading, px, Text,
-	useTimeUntil } from "./ui";
+import { bgColor, chipColorKeys, chipColors, Countdown, Loading, Text, useTimeUntil } from "./ui";
 import { VDONinjaLoader, VDONinjaPlayer } from "./vdoninja";
 
 function usePresentationTransition(

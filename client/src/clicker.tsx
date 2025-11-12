@@ -2,7 +2,7 @@ import { ComponentChildren, Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { twJoin } from "tailwind-merge";
 import { ContestProperties } from "../../shared/util";
-import { apiKeyClient, LocalStorage, useRequest } from "./clientutil";
+import { apiKeyClient, LocalStorage, useFeed, useRequest } from "./clientutil";
 import { MainContainer } from "./main";
 import { bgColor, borderColor, Button, Card, Divider, Input, Loading, Text } from "./ui";
 import { VDONinjaLoader, VDONinjaPlayer } from "./vdoninja";
@@ -92,6 +92,11 @@ function ClickerQueue() {
 			presentationQueue.call();
 		},
 	});
+	useEffect(async () => {
+		for await (const ev of apiKeyClient.feed("teamFeed", { id: 4 })) {
+			console.log(ev);
+		}
+	}, []);
 	const data = presentationQueue.current?.data;
 	const queueRef = useRef<HTMLDivElement>(null);
 	const curI = data?.current;

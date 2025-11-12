@@ -1,6 +1,6 @@
 import { ComponentChildren, createContext, JSX } from "preact";
 import { useContext, useEffect, useRef, useState } from "preact/hooks";
-import { twJoin, twMerge } from "tailwind-merge";
+import { twMerge } from "tailwind-merge";
 import { Loading } from "./ui";
 
 type VDONinjaContext = {

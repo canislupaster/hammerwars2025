@@ -154,26 +154,29 @@ export type PresentationState = Readonly<
 				team: number;
 			}[];
 		}[];
-		teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
-	} | { type: "live"; src: string } | { type: "image"; src: string } | {
-		type: "video";
+	} & Pick<SubmissionRankings, "teamVerdicts" | "verdictTime"> | { type: "live"; src: string } | {
+		type: "image";
 		src: string;
-		logo?: string;
-	} | { type: "duel" }) & { liveOverlaySrc?: string }
+	} | { type: "video"; src: string; logo?: string } | { type: "duel" }) & {
+		liveOverlaySrc?: string;
+	}
 >;
 
 export type PresentationSlide = Readonly<
 	& { noTransition?: boolean }
 	& (PresentationState & { type: "countdown" | "none" | "image" | "video" | "scoreboard" | "live" }
-		| {
-			type: "submission";
-			scoreboard: Scoreboard;
-			problemLabel: string;
-			end: number;
-			data: Readonly<
-				(PresentationState & { type: "submissions" })["problems"][number]["solutions"][number]
-			>;
-		} | { type: "duel" } & DuelState)
+		| { scoreboard: Scoreboard; end: number }
+			& ({
+				type: "submission";
+				problemLabel: string;
+				data: Readonly<
+					(PresentationState & { type: "submissions" })["problems"][number]["solutions"][number]
+				>;
+			} | { type: "teamVerdicts"; team: number; teamVerdicts: ReadonlyMap<string, number> } | {
+				type: "verdictTime";
+				problemLabel: string;
+				verdictTime: readonly Readonly<{ ac: boolean; timeFraction: number }>[];
+			}) | { type: "duel" } & DuelState)
 >;
 
 export type SubmissionRankings = {
@@ -192,6 +195,7 @@ export type SubmissionRankings = {
 		}[];
 	}[];
 	teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
+	verdictTime: ReadonlyMap<string, readonly Readonly<{ timeFraction: number; ac: boolean }>[]>;
 };
 
 export type DuelPlayer = { name: string; src?: string; solved: Set<string> };
@@ -370,6 +374,7 @@ export type API = {
 	announce: { request: { teams: number[] | "allTeams"; title: string; body: string } };
 	getResumeId: { request: { id: number }; response: { base64: string } };
 	getTeamLogo: { request: { id: number }; response: { base64: string; mime: string } };
+	getTeamFunFact: { request: { id: number }; response: string };
 	allData: { response: { users: AdminUserData[]; teams: AdminTeamData[] } };
 	setUsers: {
 		request:

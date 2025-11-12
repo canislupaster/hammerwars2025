@@ -224,18 +224,55 @@ class Presentation {
 			await this.#setSlide(state);
 		} else if (state.type == "submissions") {
 			const scoreboard = domJudge.scoreboard.v;
-			const slides = state.problems.flatMap(prob =>
-				prob.solutions.map(
-					sol => ({ data: sol, problemLabel: prob.label, scoreboard, type: "submission" } as const)
-				)
-			);
+			const slides:
+				(PresentationSlide & {
+					type: "submission" | "verdictTime" | "teamVerdicts";
+					dur: number;
+				})[] = state.problems.flatMap(prob =>
+					prob.solutions.map(
+						sol => ({
+							data: sol,
+							end: 0,
+							dur: 20_000,
+							problemLabel: prob.label,
+							scoreboard,
+							type: "submission",
+						} as const)
+					)
+				);
+
+			const extraSlides: typeof slides = [
+				...state.verdictTime.entries().map((
+					[prob, verdictTime],
+				) => ({
+					type: "verdictTime",
+					problemLabel: prob,
+					verdictTime,
+					dur: 30_000,
+					scoreboard,
+					end: 0,
+				} as const)),
+				...state.teamVerdicts.entries().map((
+					[team, teamVerdicts],
+				) => ({
+					type: "teamVerdicts",
+					team,
+					dur: 5_000,
+					teamVerdicts,
+					scoreboard,
+					end: 0,
+				} as const)),
+			];
+
+			for (const s of extraSlides) {
+				slides.splice(Math.round(Math.random()*slides.length), 0, s);
+			}
 
 			let i = 0;
-			const slideDur = 20_000;
 			while (!abort.aborted && slides.length > 0) {
 				const slide = slides[(i++)%slides.length];
-				await this.#setSlide({ ...slide, end: Date.now()+slideDur });
-				await delay(slideDur, abort);
+				await this.#setSlide({ ...slide, end: Date.now()+slide.dur });
+				await delay(slide.dur, abort);
 			}
 		} else if (state.type == "duel") {
 			let first = true;

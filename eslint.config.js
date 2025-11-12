@@ -30,7 +30,7 @@ export default defineConfig([
 		],
 		languageOptions: { globals: { ...globals.browser }, parserOptions: { projectService: true } },
 	},
-	{ ignores: ["dist", "devdocs"] },
+	{ ignores: ["dist", "devdocs", "vdo.ninja"] },
 	{
 		files: ["scripts/**/*", "server/**/*", "shared/**/*"],
 		extends: [pluginJs.configs.recommended, ...tseslint.configs.recommendedTypeChecked, common],

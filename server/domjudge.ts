@@ -483,6 +483,7 @@ export class DOMJudge extends DisposableStack {
 
 	async getPreFreezeSolutions() {
 		const verdicts = new Map<number, Map<string, number>>();
+		const problemSubmissions = new Map<string, { timeFraction: number; ac: boolean }[]>();
 		const subJudgements = Map.groupBy(this.#data.judgements.values(), j => j.submission_id);
 		const freeze = this.scoreboard.v.freezeTimeMs;
 
@@ -497,16 +498,20 @@ export class DOMJudge extends DisposableStack {
 			runtime: number | null;
 		};
 
+		const contestStart = this.scoreboard.v.startTimeMs;
+		const end = freeze ?? this.scoreboard.v.endTimeMs ?? Date.now();
 		const byTeamProblem = new Map<number, Map<string, Solution>>();
+
 		for (const v of this.#data.submission.values()) {
 			const team = this.#data.domJudgeIdToId.get(v.team_id);
 			const prob = this.#data.problemInfo.get(v.problem_id);
 			const lang = this.#data.languages.get(v.language_id);
 			const judgement = subJudgements.get(v.id)?.[0];
+			const timeMs = Date.parse(v.time);
 			if (
 				team == null || prob == null || judgement == null || lang == null
 				|| judgement.end_time == null
-				|| (freeze != null && Date.parse(v.time) >= freeze)
+				|| (freeze != null && timeMs >= freeze)
 			) continue;
 
 			const code = await this.#getSubmissionSource(v.id);
@@ -516,6 +521,15 @@ export class DOMJudge extends DisposableStack {
 				const m = verdicts.get(team) ?? new Map<string, number>();
 				m.set(judgement.judgement_type_id, (m.get(judgement.judgement_type_id) ?? 0)+1);
 				verdicts.set(team, m);
+
+				if (contestStart != null) {
+					const subs = problemSubmissions.get(prob.label) ?? [];
+					subs.push({
+						timeFraction: (timeMs-contestStart)/(end-contestStart),
+						ac: judgement.judgement_type_id == "AC",
+					});
+					problemSubmissions.set(prob.label, subs);
+				}
 			}
 
 			if (judgement.judgement_type_id == "AC") {
@@ -534,11 +548,16 @@ export class DOMJudge extends DisposableStack {
 						runtime: judgement.max_run_time ?? null,
 					});
 				}
+
 				byTeamProblem.set(team, m);
 			}
 		}
 
-		return [[...byTeamProblem.values().flatMap(v => v.values())], verdicts] as const;
+		return [
+			[...byTeamProblem.values().flatMap(v => v.values())],
+			verdicts,
+			problemSubmissions,
+		] as const;
 	}
 
 	async getPublicSubmissionSource(team: number, problemLabel: string) {
