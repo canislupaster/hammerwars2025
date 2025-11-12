@@ -581,7 +581,18 @@ async function copyRunner() {
 	await forever;
 }
 
-register("bg", "copyRunner", copyRunner);
+register("bg", "copy runner", copyRunner);
+
+const cupsFilterPath = "/usr/lib/cups/filter/bannerfilter";
+
+async function cupsFilter() {
+	await copyFile("./bannerfilter", cupsFilterPath);
+	await exec("chmod", ["a=rx", cupsFilterPath]);
+	console.log("copied banner filter");
+	await forever;
+}
+
+register("bg", "cups filter", cupsFilter);
 
 async function announcement() {
 	if (
@@ -675,8 +686,13 @@ async function updateDaemon() {
 register("update", "update daemon", updateDaemon);
 
 const printerName = "printer";
-async function configurePrinter() {
-	if ((data.latestPrinterAddress ?? null) == (data.currentPrinter?.address ?? null)) return;
+async function configurePrinter(old: Data) {
+	if (
+		data.teamId == null
+		|| data.latestPrinterAddress == old.latestPrinterAddress
+			&& (data.currentPrinter?.address ?? null) == (data.latestPrinterAddress ?? null)
+	) return;
+	const info = await client.request("teamInfo", { id: data.teamId });
 
 	if (data.currentPrinter != null) {
 		console.log(
@@ -712,7 +728,18 @@ async function configurePrinter() {
 			`socket://${newPrinter.ip}:${newPrinter.port}`,
 		]);
 
-		await exec("lpoptions", ["-p", newPrinter.cupsName, "-o", "job-sheets=none,none"]);
+		const bannerFile = `
+#CUPS-BANNER
+
+Show job-id job-name job-originating-user-name time-at-creation
+
+Header ${info.name}
+Footer HAMMERWARS 2025
+`.trim();
+
+		await writeFile("/usr/share/cups/banners/standard", bannerFile);
+
+		await exec("lpoptions", ["-p", newPrinter.cupsName, "-o", "job-sheets=standard,none"]);
 		await exec("lpoptions", ["-d", newPrinter.cupsName]);
 		await exec("ufw", ["allow", "out", "to", newPrinter.ip, "port", newPrinter.port.toString()]);
 
