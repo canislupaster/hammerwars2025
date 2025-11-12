@@ -57,9 +57,12 @@ function ConfirmAttendanceInner() {
 				If that's a mistake, you can <Anchor href="/register">register again</Anchor>.
 			</Text>}
 		</>;
+	} else if (team == null) {
+		return <Alert bad title="Sorry, you haven't set a team by the registration deadline."
+			txt="I accidentally sent the confirmation email to those without a team. Unfortunately, registration for teams has closed and we are well over capacity. Sorry..." />;
 	}
 
-	const soloing = info.current.data.team?.members.length == 1;
+	const soloing = team.members.length == 1;
 
 	return <form onSubmit={ev => {
 		const confirm = ev.submitter?.getAttribute("name") != "cancel";
@@ -80,63 +83,61 @@ function ConfirmAttendanceInner() {
 		<LoadingOverlay open={loading} />
 		<ConfirmUnsubmit {...unsubmit} />
 		<Text v="big">Confirm your attendance</Text>
-		{team != null && <>
-			<Divider />
-			<Text v="md">Fun fact about your team</Text>
-			<Text className="-mt-2" v="dim">
-				Optional{funFact.length > 0 && `, ${funFact.length}/${maxFactLength}`}
-			</Text>
-			<Textarea value={funFact} onInput={ev => setFunFact(ev.currentTarget.value)} minLength={0}
-				maxLength={maxFactLength} />
-			<Divider />
-			<Text v="md">Prewritten code</Text>
-			<Text className="-mt-2" v="dim">
-				You don't need prewritten code to solve most problems, and you'll have time during the
-				practice contest to download whatever you want with full internet access. But if you like,
-				you can upload arbitrary files now and avoid the pain of transferring them.
-			</Text>
-			<Card className="p-2">
-				{team.files.length > 0
-					? <div className="flex flex-col gap-1 text-sm">
-						{team.files.map(file =>
-							<Text className={twJoin(bgColor.secondary, "p-1 rounded-md")} key={file.name}>
-								{file.name} ({formatFileSize(file.size)})
-							</Text>
-						)}
-					</div>
-					: <Text>No files uploaded yet.</Text>}
-			</Card>
-			<div className="flex flex-row flex-wrap gap-2">
-				<FileInput type="button" loading={updateTeamReq.loading} multiple onUpload={files => {
-					const allFiles = [...files, ...team.files];
-					if (new Set(allFiles.map(v => v.name)).size != allFiles.length) {
-						return "You can't upload two files with the same name.";
-					}
-					const totalSize = allFiles.map(v => v.size).reduce((a, b) => a+b, 0);
-					if (totalSize > teamFilesMaxSize) {
-						return `That's too big! ${formatFileSize(totalSize)} exceeds the maximum of ${
-							formatFileSize(teamFilesMaxSize)
-						}`;
-					}
-					const filenameRe = new RegExp(validFilenameRe);
-					if (files.some(v => !filenameRe.test(v.name))) {
-						return "Invalid filename";
-					}
-					void Promise.all(files.map(async f => ({ base64: await toBase64(f), name: f.name })))
-						.then(files2 =>
-							updateTeamReq.call({ name: team.name, funFact: team.funFact, files: files2 })
-						);
-				}}>
-					Upload files
-				</FileInput>
-				<Button type="button" disabled={team.files.length == 0} loading={updateTeamReq.loading}
-					onClick={() =>
-						updateTeamReq.call({ name: team.name, funFact: team.funFact, files: "remove" })}>
-					Remove all files
-				</Button>
-			</div>
-			<Divider />
-		</>}
+
+		<Divider />
+		<Text v="md">Fun fact about your team</Text>
+		<Text className="-mt-2" v="dim">
+			Optional{funFact.length > 0 && `, ${funFact.length}/${maxFactLength}`}
+		</Text>
+		<Textarea value={funFact} onInput={ev => setFunFact(ev.currentTarget.value)} minLength={0}
+			maxLength={maxFactLength} />
+		<Divider />
+		<Text v="md">Prewritten code</Text>
+		<Text className="-mt-2" v="dim">
+			You don't need prewritten code to solve most problems, and you'll have time during the
+			practice contest to download whatever you want with full internet access. But if you like, you
+			can upload arbitrary files now and avoid the pain of transferring them.
+		</Text>
+		<Card className="p-2">
+			{team.files.length > 0
+				? <div className="flex flex-col gap-1 text-sm">
+					{team.files.map(file =>
+						<Text className={twJoin(bgColor.secondary, "p-1 rounded-md")} key={file.name}>
+							{file.name} ({formatFileSize(file.size)})
+						</Text>
+					)}
+				</div>
+				: <Text>No files uploaded yet.</Text>}
+		</Card>
+		<div className="flex flex-row flex-wrap gap-2">
+			<FileInput type="button" loading={updateTeamReq.loading} multiple onUpload={files => {
+				const allFiles = [...files, ...team.files];
+				if (new Set(allFiles.map(v => v.name)).size != allFiles.length) {
+					return "You can't upload two files with the same name.";
+				}
+				const totalSize = allFiles.map(v => v.size).reduce((a, b) => a+b, 0);
+				if (totalSize > teamFilesMaxSize) {
+					return `That's too big! ${formatFileSize(totalSize)} exceeds the maximum of ${
+						formatFileSize(teamFilesMaxSize)
+					}`;
+				}
+				const filenameRe = new RegExp(validFilenameRe);
+				if (files.some(v => !filenameRe.test(v.name))) {
+					return "Invalid filename";
+				}
+				void Promise.all(files.map(async f => ({ base64: await toBase64(f), name: f.name }))).then(
+					files2 => updateTeamReq.call({ name: team.name, funFact: team.funFact, files: files2 })
+				);
+			}}>
+				Upload files
+			</FileInput>
+			<Button type="button" disabled={team.files.length == 0} loading={updateTeamReq.loading}
+				onClick={() =>
+					updateTeamReq.call({ name: team.name, funFact: team.funFact, files: "remove" })}>
+				Remove all files
+			</Button>
+		</div>
+		<Divider />
 		{soloing
 			&& <Alert title={<Text v="md" className="mt-1">It looks like you're alone in your team</Text>}
 				txt={

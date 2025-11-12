@@ -19,7 +19,7 @@ import { makeVerificationEmail } from "./email.ts";
 import { env } from "./env.ts";
 import { auth, Context, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai, rootUrl,
 	sesClient } from "./main.ts";
-import { evalSolutions, presentation } from "./presentation.ts";
+import { evalSolutions, presentation, PresentationEvent } from "./presentation.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
@@ -71,10 +71,12 @@ const presentationSubmissionsSchema = z.object({
 	teamVerdicts: z.map(z.number(), z.map(z.string(), z.number())),
 });
 
+const duelConfigPlayer = z.object({ name: z.string(), cf: z.string(), src: z.string().optional() });
+
 const duelSchema = z.object({
 	cfContestId: z.number(),
-	layout: z.enum(["left", "both", "right", "score"]),
-	players: z.array(z.object({ name: z.string(), cf: z.string(), src: z.string().optional() })),
+	layout: z.enum(["left", "both", "right"]),
+	players: z.tuple([duelConfigPlayer, duelConfigPlayer]),
 }).nullable();
 
 const presentationSchema = z.object({
@@ -1043,24 +1045,31 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		feed: true,
 		validator: z.object({ live: z.boolean() }),
 		handler: async function* handler(signal, _c, req) {
+			yield { type: "live", srcs: presentation.liveSrcs };
 			if (req.live) {
 				yield { type: "slide", slide: presentation.liveState.slide };
 				yield { type: "overlay", overlaySrc: presentation.liveState.overlaySrc };
 				while (!signal.aborted) {
 					const ty = await presentation.events.waitFor(
-						x => x == "liveSlide" || x == "liveOverlay",
+						x => x == "liveSlide" || x == "liveOverlay" || x == "liveProp",
 						signal,
 					);
 					if (ty == "liveOverlay") {
 						yield { type: "overlay", overlaySrc: presentation.liveState.overlaySrc };
 					} else if (ty == "liveSlide") {
 						yield { type: "slide", slide: presentation.liveState.slide };
+					} else if (ty == "liveProp") {
+						yield { type: "live", srcs: presentation.liveSrcs };
 					}
 				}
 			} else {
+				let last: PresentationEvent | null = null;
 				while (!signal.aborted) {
-					yield { type: "slide", slide: presentation.slide };
-					await presentation.events.waitFor(x => x == "slide", signal);
+					if (last == null || last == "slide") yield { type: "slide", slide: presentation.slide };
+					if (last == null || last == "liveProp") {
+						yield { type: "live", srcs: presentation.liveSrcs };
+					}
+					last = await presentation.events.waitFor(x => x == "slide" || x == "liveProp", signal);
 				}
 			}
 		},

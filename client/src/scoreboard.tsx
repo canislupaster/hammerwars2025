@@ -14,7 +14,7 @@ import { Button, chipColorKeys, chipTextColors, Countdown, Divider, Input, Loadi
 const rowBorder = "border-b-2 box-border border-neutral-800";
 const highlightBg = "theme:bg-amber-400/90 theme:text-black";
 
-function useChanged(dur: number, ...values: unknown[]) {
+export function useChanged(dur: number, ...values: unknown[]) {
 	const [ret, setRet] = useState<boolean>(false);
 	const init = useRef(false);
 	useEffect(() => {

@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { env } from "node:process";
-import { ContestProperties, delay, DuelState, fill, PresentationSlide, PresentationState,
+import { delay, DuelConfigPlayer, DuelPlayer, PresentationSlide,
 	SubmissionRankings } from "../shared/util";
-import { EventEmitter, getProperty, Mutable, propertiesChanged, transaction } from "./db";
-import { DOMJudge, domJudge } from "./domjudge";
+import { EventEmitter, getProperty, propertiesChanged, transaction } from "./db";
+import { domJudge } from "./domjudge";
 import { openai } from "./main";
 import { fetchDispatcher } from "./proxies";
 
@@ -133,7 +133,8 @@ type CodeforcesStandingsResult = {
 	}[];
 };
 
-type Event = "slide" | "liveSlide" | "liveOverlay" | "presentationProp" | "liveProp";
+export type PresentationEvent = "slide" | "liveSlide" | "liveOverlay" | "presentationProp" | "error"
+	| "liveProp";
 
 class Presentation {
 	slide: PresentationSlide = { type: "none" };
@@ -141,8 +142,9 @@ class Presentation {
 		slide: { type: "none" },
 		overlaySrc: null,
 	};
+	liveSrcs: string[] = [];
 
-	events = new EventEmitter<Event>();
+	events = new EventEmitter<PresentationEvent>();
 
 	async #codeforces<T>(
 		path: string,
@@ -187,6 +189,7 @@ class Presentation {
 
 	async #updateLive() {
 		const live = await transaction(trx => getProperty(trx, "live")) ?? [];
+		this.liveSrcs = live.map(v => v.src);
 		const activeLive = live.find(x => x.active);
 		const overlayLive = live.find(x => x.overlay);
 		const slide = activeLive != null
@@ -270,19 +273,19 @@ class Presentation {
 						solves.sort((u, v) => u.time-v.time);
 						if (solves.length > 0) solves[0].first = true;
 					}
-
+					const getSolved = (v: DuelConfigPlayer): DuelPlayer => ({
+						...v,
+						solved: new Set(
+							(standingsByPlayer.get(v.cf)?.values() ?? []).filter(x => x.first).map(u =>
+								standings.problems[u.problemI].index
+							),
+						),
+					});
 					await this.#setSlide({
 						type: "duel",
 						layout: duelCfg.layout,
 						problemLabels: standings.problems.map(v => v.index),
-						players: duelCfg.players.map(v => ({
-							...v,
-							solved: new Set(
-								(standingsByPlayer.get(v.cf)?.values() ?? []).filter(x => x.first).map(u =>
-									standings.problems[u.problemI].index
-								),
-							),
-						})),
+						players: [getSolved(duelCfg.players[0]), getSolved(duelCfg.players[1])],
 						noTransition: !first,
 					});
 
@@ -295,37 +298,49 @@ class Presentation {
 	}
 
 	async #loop() {
-		let lastControl: [Promise<void>, AbortController] | null = null;
-		propertiesChanged.on(c => {
-			if (c.k == "presentation") {
-				this.events.emit("presentationProp");
-			} else if (c.k == "live") {
-				this.events.emit("liveProp");
-			}
-		});
-
-		const evQueue: Event[] = [];
-		this.events.on(x => evQueue.push(x));
-
 		while (true) {
+			const disp = new DisposableStack();
+			let lastControl: [Promise<void>, AbortController] | null = null;
 			try {
+				disp.defer(() => lastControl?.[1]?.abort());
+
+				disp.use(propertiesChanged.on(c => {
+					if (c.k == "presentation") {
+						this.events.emit("presentationProp");
+					} else if (c.k == "live") {
+						this.events.emit("liveProp");
+					}
+				}));
+
+				const evQueue: PresentationEvent[] = ["presentationProp"];
+				disp.use(this.events.on(x => evQueue.push(x)));
+
 				while (true) {
 					const ev = evQueue.shift();
 					if (ev == null) break;
-					if (ev == "liveProp" || ev == "liveOverlay") await this.#updateLive();
-					else if (ev == "presentationProp") {
+					if (ev == "error") throw new Error("error event");
+					if (ev == "liveProp" || ev == "liveOverlay") {
+						await this.#updateLive();
+					} else if (ev == "presentationProp") {
 						if (lastControl != null) {
 							lastControl[1].abort();
 							await lastControl[0];
 						}
 						const abort2 = new AbortController();
-						const prom = this.#controlPresentation(abort2.signal);
+						const prom = this.#controlPresentation(abort2.signal).catch(err => {
+							console.error("presentation control error", err);
+							this.events.emit("error");
+						});
 						lastControl = [prom, abort2];
 					}
+
+					if (evQueue.length == 0) await this.events.wait();
 				}
-				await this.events.wait();
 			} catch (e) {
-				console.error("presentation error", e);
+				console.error("presentation error, retrying in 1s", e);
+				await delay(1000);
+			} finally {
+				disp.dispose();
 			}
 		}
 	}

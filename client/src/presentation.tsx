@@ -1,19 +1,18 @@
-import { ComponentChildren } from "preact";
+import { ComponentChildren, HTMLAttributes, JSX } from "preact";
+import { useLocation } from "preact-iso";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef,
 	useState } from "preact/hooks";
-import { twJoin } from "tailwind-merge";
-
-import { useLocation } from "preact-iso";
+import { twJoin, twMerge } from "tailwind-merge";
 import { add, add3, mul, mul3, rot, V2, V3 } from "../../shared/geo";
-import { badHash, delay, fill, PresentationSlide, PresentationState,
-	Scoreboard } from "../../shared/util";
-import { apiBaseUrl, apiClient, useFeed } from "./clientutil";
+import { badHash, DuelState, fill, PresentationSlide } from "../../shared/util";
+import { apiBaseUrl, useFeed } from "./clientutil";
 import { CodeBlock } from "./code";
 import { Pattern3, PatternBg } from "./home";
-import ScoreboardPage from "./scoreboard";
+import ScoreboardPage, { useChanged } from "./scoreboard";
 import { Scroller, useScroll } from "./scroller";
-import { bgColor, chipColorKeys, chipColors, Countdown, Loading, Text, useAsync,
+import { bgColor, chipColorKeys, chipColors, Countdown, Loading, px, Text,
 	useTimeUntil } from "./ui";
+import { VDONinjaLoader, VDONinjaPlayer } from "./vdoninja";
 
 function usePresentationTransition(
 	{ start, hold, onDone, simple }: {
@@ -271,7 +270,97 @@ function VideoSlide(
 		const tm = setTimeout(() => ref.current!.play(), 500);
 		return () => clearTimeout(tm);
 	}, []);
-	return <video src={slide.src} ref={ref} muted={!active} className="max-h-full max-w-full" />;
+	return slide.type == "live"
+		? <VDONinjaPlayer muted={!active} room={slide.src} className="h-full w-full" />
+		: <video src={slide.src} ref={ref} muted={!active} className="max-h-full max-w-full" />;
+}
+
+const duelPlayerColor = [{
+	txt: "bg-linear-to-r from-orange-600 to-amber-500 anim-grad-bg",
+	bg: "bg-orange-400",
+}, {
+	txt: "bg-linear-to-r from-amber-400 to-yellow-700 anim-grad-bg",
+	bg: "theme:bg-yellow-300",
+}] as const;
+
+function DuelProblem(
+	{ state, prob, solver, active }: {
+		state: DuelState;
+		prob: string;
+		solver: number | null;
+		active: boolean;
+	},
+) {
+	const ref = useRef<HTMLDivElement>(null);
+	const [center, setCenter] = useState<number | null>(null);
+
+	useEffect(() => {
+		const el = ref.current, el2 = ref.current?.parentElement;
+		if (!el || !el2) return;
+		setCenter(el2.clientLeft+el2.clientWidth/2-el.clientLeft-el.clientWidth/2);
+	}, [state]);
+
+	const solveChange = useChanged(500, solver);
+	const solveChangeLong = useChanged(1000, solver);
+	return <div ref={ref}
+		className={twJoin(
+			"h-25 aspect-square flex flex-col justify-center gap-1 items-center transition-all duration-500",
+			solver != null && duelPlayerColor[solver].bg,
+			solveChange && "scale-200",
+			solveChangeLong && "z-10",
+			active && solver == null && "bg-white/90 animate-pulse",
+			!active && solver == null && !solveChange
+				? "opacity-50 bg-neutral-500"
+				: "shadow-black shadow-xl",
+		)} style={{ translate: solveChange ? `${center ?? 0}px 0px` : undefined }}>
+		<Text className="theme:text-black" v="big">{prob}</Text>
+		{solver != null
+			&& <Text className="theme:text-black" v="md">{state.players[solver].name}</Text>}
+	</div>;
+}
+
+function DuelScore({ state }: { state: DuelState }) {
+	const problemToPlayer = new Map(
+		state.players.flatMap((p, i) => [...p.solved.values().map(p2 => [p2, i] as const)]),
+	);
+	const activeProblem = state.problemLabels.findLastIndex(x => problemToPlayer.has(x))+1;
+
+	return <div className="flex flex-row gap-[10%] w-full justify-around items-center">
+		<div className="px-6 relative flex flex-row items-center h-20">
+			<Text v="big" className={duelPlayerColor[0].txt}>{state.players[0].name}</Text>
+			<div className="absolute left-0 right-0 bg-gray-100 top-0 bottom-0 -z-1 skew-x-11" />
+		</div>
+		<div className="flex flex-row">
+			{state.problemLabels.map((prob, i) => {
+				const playerSolved = problemToPlayer.get(prob);
+				return <DuelProblem active={activeProblem == i} key={prob} state={state} prob={prob}
+					solver={playerSolved ?? null} />;
+			})}
+		</div>
+		<div className="px-6 relative flex flex-row items-center h-20">
+			<Text v="big" className={duelPlayerColor[1].txt}>{state.players[1].name}</Text>
+			<div className="absolute left-0 right-0 bg-gray-100 top-0 bottom-0 -z-1 -skew-x-11" />
+		</div>
+	</div>;
+}
+
+function DuelSlide({ state }: { state: DuelState }) {
+	const [l, r] = state.players;
+	const both = l.src != null && r.src != null && state.layout == "both";
+	const cls = (isL: boolean) =>
+		twJoin(
+			"transition-all duration-1000 w-1/2",
+			!both && isL && "translate-x-1/2 scale-125",
+			!both && !isL && "-translate-x-1/2 scale-125",
+			!both && (isL != (state.layout == "left")) && "opacity-0",
+		);
+	return <div className="flex flex-col gap-2 items-center mt-10 h-full">
+		<DuelScore state={state} />
+		<div className="flex flex-row gap-5 justify-evenly w-full items-center grow">
+			{l.src != null && <VDONinjaPlayer room={l.src} muted className={cls(true)} />}
+			{r.src != null && <VDONinjaPlayer room={r.src} muted className={cls(false)} />}
+		</div>
+	</div>;
 }
 
 function PresentationSlideView({ slide, active }: { slide: PresentationSlide; active: boolean }) {
@@ -280,6 +369,7 @@ function PresentationSlideView({ slide, active }: { slide: PresentationSlide; ac
 	else if (slide.type == "countdown") inner = <PresentationCountdown slide={slide} />;
 	else if (slide.type == "submission") inner = <SubmissionSlide slide={slide} />;
 	else if (slide.type == "image") inner = <img src={slide.src} className="max-w-full max-h-full" />;
+	else if (slide.type == "duel") return <DuelSlide state={slide} />;
 	else if (slide.type == "video" || slide.type == "live") {
 		inner = <VideoSlide slide={slide} active={active} />;
 	} else if (slide.type == "scoreboard") inner = <></>;
@@ -310,15 +400,18 @@ function PresentationOverlay({ src, active }: { src: string; active: boolean }) 
 	const [state, setState] = useState<[number, string, string | null]>([0, src, null]);
 
 	return <div className="absolute left-10 bottom-30 drop-shadow-black drop-shadow-xl">
-		<video key={state[0]+1} src={state[1]} muted autoplay className="max-w-[580px]"
+		<VDONinjaPlayer muted={!active} key={state[0]+1} room={state[1]} className="w-[580px]"
 			style={{
 				maskImage: active
 					? `url("#${transition.ids.toId}"), url("#${transition.ids.toSubId}")`
 					: `url("#${transition.ids.fromId}"), url("#${transition.ids.fromSubId}")`,
 			}} />
-		<video key={state[0]} src={state[2] ?? undefined} muted autoplay
-			className="max-w-[580px] absolute top-0 left-0"
-			style={{ maskImage: `url("#${transition.ids.fromId}"), url("#${transition.ids.fromId}")` }} />
+		{state[2] != null
+			&& <VDONinjaPlayer muted key={state[0]} room={state[2]}
+				className="w-[580px] absolute bottom-0 left-0"
+				style={{
+					maskImage: `url("#${transition.ids.fromId}"), url("#${transition.ids.fromId}")`,
+				}} />}
 		<PresentationTransition {...transition} />
 	</div>;
 }
@@ -354,11 +447,13 @@ export default function Presentation() {
 
 	const loc = useLocation();
 	const [overlay, setOverlay] = useState<{ src: string; active: boolean } | null>(null);
+	const [liveSrcs, setLiveSrcs] = useState<string[]>([]);
 
 	useFeed(
 		"presentation",
 		useCallback(up => {
 			if (up.type == "slide") setSlide(up.slide);
+			else if (up.type == "live") setLiveSrcs([...new Set(up.srcs)]);
 			else {setOverlay(old =>
 					up.overlaySrc != null
 						? { src: up.overlaySrc, active: true }
@@ -370,15 +465,22 @@ export default function Presentation() {
 		useMemo(() => ({ live: "live" in loc.query }), [loc.query]),
 	);
 
+	const last: PresentationSlide | null = slides[1][slides[1].length-1] ?? null;
+	const logo = last != null && last.type == "video" && last.logo;
+	const live = last != null && last.type == "live";
+
+	const srcs = useMemo(() => {
+		return [
+			...liveSrcs,
+			...last?.type == "duel" ? last.players.map(v => v.src).filter(x => x != null) : [],
+		];
+	}, [last, liveSrcs]);
+
 	if (slides[1].length == 1 && slides[1][0].type == "scoreboard") {
 		return <ScoreboardPage />;
 	}
 
-	const last = slides[1][slides[1].length-1] ?? null;
-	const logo = last != null && last.type == "video" && last.logo;
-	const live = last != null && last.type == "live";
-
-	return <>
+	return <VDONinjaLoader rooms={srcs}>
 		<div
 			className={twJoin(
 				"flex flex-col gap-8 h-dvh justify-center items-center transition-transform duration-1000",
@@ -428,5 +530,6 @@ export default function Presentation() {
 		</div>
 		{overlay && <PresentationOverlay {...overlay} />}
 		<PatternBg pat={() => new Pattern3()} uniformVelocity flipAnim velocity={0.5} />
-	</>;
+		{/* keep connections loaded */}
+	</VDONinjaLoader>;
 }

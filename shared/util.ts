@@ -139,7 +139,7 @@ export type TeamContestProperties = {
 	visibleDirectories: string[];
 };
 
-export type DuelLayout = "left" | "both" | "right" | "score";
+export type DuelLayout = "left" | "both" | "right";
 
 export type PresentationState = Readonly<
 	({ type: "none" } | { type: "scoreboard" } | { type: "countdown"; to: number; title: string } | {
@@ -194,16 +194,20 @@ export type SubmissionRankings = {
 	teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
 };
 
+export type DuelPlayer = { name: string; src?: string; solved: Set<string> };
+
 export type DuelState = {
 	layout: DuelLayout;
 	problemLabels: string[];
-	players: { name: string; src?: string; solved: Set<string> }[];
+	players: [DuelPlayer, DuelPlayer];
 };
+
+export type DuelConfigPlayer = { name: string; cf: string; src?: string };
 
 export type DuelConfig = {
 	cfContestId: number;
 	layout: DuelLayout;
-	players: { name: string; cf: string; src?: string }[];
+	players: [DuelConfigPlayer, DuelConfigPlayer];
 } | null;
 
 export type ContestProperties = {
@@ -411,7 +415,7 @@ export type API = {
 		response: { type: "slide"; slide: PresentationSlide } | {
 			type: "overlay";
 			overlaySrc: string | null;
-		};
+		} | { type: "live"; srcs: string[] };
 	};
 	screenshot: { request: { team: number; data: string; mac: string } };
 	getPreFreezeSolutions: {

@@ -4,8 +4,8 @@ import { twJoin } from "tailwind-merge";
 import { ContestProperties } from "../../shared/util";
 import { apiKeyClient, LocalStorage, useRequest } from "./clientutil";
 import { MainContainer } from "./main";
-import { bgColor, borderColor, Button, capitalize, Card, Divider, Input, Loading,
-	Text } from "./ui";
+import { bgColor, borderColor, Button, Card, Divider, Input, Loading, Text } from "./ui";
+import { VDONinjaLoader, VDONinjaPlayer } from "./vdoninja";
 
 function ClickerQueueItem(
 	{ v, active, jump, loading, duel }: {
@@ -27,7 +27,7 @@ function ClickerQueueItem(
 		title = "Live";
 		details = [["Source", v.src], [
 			"Preview",
-			<video src={v.src} autoplay muted key={v.src} className="max-h-[20dvh]" />,
+			<VDONinjaPlayer muted room={v.src} key={v.src} className="max-h-[20dvh]" />,
 		]];
 	} else if (v.type == "image") {
 		title = "Image";
@@ -179,13 +179,13 @@ function ClickerQueue() {
 					</div>
 
 					<Text v="bold">Preview</Text>
-					<video src={v.src} autoplay muted key={v.src} className="max-h-[20dvh]" />
+					<VDONinjaPlayer muted room={v.src} className="max-h-[20dvh]" />
 				</Card>))}
 		</div>
 		{duel != null && <>
 			<Text v="md">Duel layout</Text>
 			<div className="flex flex-row flex-wrap gap-2">
-				{(["left", "both", "right", "score"] as const).map(layout =>
+				{(["left", "both", "right"] as const).map(layout =>
 					<Button key={layout} loading={l}
 						className={twJoin(layout == data?.duel?.layout && bgColor.highlight)} onClick={() => {
 						setProperties.call({ duel: { ...duel, layout } });
@@ -195,6 +195,14 @@ function ClickerQueue() {
 					</Button>
 				)}
 			</div>
+			{[0, 1].map(i =>
+				<Fragment key={i}>
+					<Text v="bold">{["Left", "Right"][i]} preview ({duel.players[i].name})</Text>
+					{duel.players[i].src == null
+						? <Text>No source provided.</Text>
+						: <VDONinjaPlayer muted room={duel.players[i].src} className="max-w-[50dvh]" />}
+				</Fragment>
+			)}
 		</>}
 	</>;
 }
@@ -221,6 +229,8 @@ export default function Clicker() {
 		</MainContainer>;
 	}
 	return <MainContainer>
-		<ClickerQueue />
+		<VDONinjaLoader>
+			<ClickerQueue />
+		</VDONinjaLoader>
 	</MainContainer>;
 }

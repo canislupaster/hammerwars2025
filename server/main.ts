@@ -264,7 +264,23 @@ const api = new Hono<HonoEnv>();
 await makeRoutes(api);
 app.route("/api", api);
 
+app.use("*", async (c, next) => {
+	c.header("Cross-Origin-Opener-Policy", "same-origin");
+	c.header("Cross-Origin-Embedder-Policy", "require-corp");
+	c.header("Permissions-Policy", "autoplay=*");
+	return next();
+});
+
 const distDir = "../client/dist";
+app.get(
+	"/vdo/*",
+	serveStatic({
+		root: "../vdo.ninja",
+		rewriteRequestPath: p => p.replace(/^\/vdo\//, ""),
+		index: "../vdo.ninja/index.html",
+	}),
+);
+app.get("clicker", serveStatic({ path: join(distDir, "index.html") }));
 app.get("*", serveStatic({ root: distDir }));
 app.get("*", serveStatic({ path: join(distDir, "index.html") }));
 

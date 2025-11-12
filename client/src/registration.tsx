@@ -56,10 +56,11 @@ function GenerateTeamLogo({ refresh, disabled }: { refresh: () => void; disabled
 }
 
 function ShirtPreview(
-	{ info, setSeed, setHue }: {
+	{ info, setSeed, setHue, disabled }: {
 		info: Pick<API["getInfo"]["response"] & { type: "ok" }, "info" | "team" | "organizer">;
 		setSeed: (x: number) => void;
 		setHue: (x: number) => void;
+		disabled: boolean;
 	},
 ) {
 	const [res, setRes] = useState<GenShirtResponse | null>(null);
@@ -115,7 +116,7 @@ function ShirtPreview(
 
 	return <div className="flex flex-col gap-1 w-full">
 		<Text v="md">Shirt preview</Text>
-		<Button type="button" onClick={() => {
+		<Button disabled={disabled} type="button" onClick={() => {
 			setSeed(randomShirtSeed());
 		}} icon={<IconDice />}>
 			Randomize seed
@@ -123,14 +124,15 @@ function ShirtPreview(
 
 		<div className="flex flex-row flex-wrap gap-x-2 items-center mt-1 gap-y-1">
 			Seed
-			<Input {...validSeed} className="grow basis-40" type="number" step="1" min={0}
-				max={maxShirtSeed} />
+			<Input disabled={disabled} {...validSeed} className="grow basis-40" type="number" step="1"
+				min={0} max={maxShirtSeed} />
 		</div>
 
 		<div className="flex flex-row gap-2 w-full mt-1 gap-y-1 flex-wrap">
 			<Text>Hue</Text>
-			<input value={info.info.shirtHue} onInput={ev => setHue(ev.currentTarget.valueAsNumber)}
-				type="range" min={0} max={360} className="grow" />
+			<input disabled={disabled} value={info.info.shirtHue}
+				onInput={ev => setHue(ev.currentTarget.valueAsNumber)} type="range" min={0} max={360}
+				className="grow" />
 		</div>
 
 		<Collapse className="self-center">
@@ -315,6 +317,7 @@ export default function RegistrationEditor() {
 		|| inPersonClosed && inPersonMember != null;
 	const infoLocked = userInfo.inPerson == null && onlineClosed
 		|| inPersonClosed && userInfo.inPerson != null;
+	const dis = { disabled: data.submitted || loading };
 
 	return <MainContainer>
 		<Card className="w-full max-w-2xl gap-3">
@@ -330,29 +333,28 @@ export default function RegistrationEditor() {
 						<Countdown time={untilClose} />
 					</>}
 				</>}
-			<form ref={formRef} onSubmit={ev => {
+			<form {...dis} ref={formRef} onSubmit={ev => {
 				ev.preventDefault();
 				if (anyMissing) {
 					setShowMissing(true);
-				} else if (!data.submitted && !infoLocked && ev.currentTarget.reportValidity()) {
+				} else if (!infoLocked && ev.currentTarget.reportValidity()) {
 					updateInfo.call({ info: userInfo, submit: true });
 				}
 			}}>
-				<div className={"flex flex-col gap-3 max-w-xl items-stretch relative"}
-					inert={loading || data.submitted}>
+				<div className={"flex flex-col gap-3 max-w-xl items-stretch relative"}>
 					<Text v="md" className="-mb-2">Your name</Text>
-					<Input pattern={validFullNameRe} value={userInfo.name ?? ""}
+					<Input {...dis} pattern={validFullNameRe} value={userInfo.name ?? ""}
 						valueChange={v => modInfo("name", v == "" ? undefined : v)} />
 					{makeMissingAlert("name", "Name")}
 
 					<Text v="md" className="-mb-3">Discord</Text>
 					<Text v="dim" className="-mb-1">(Optional, but will help us contact you.)</Text>
-					<Input value={userInfo.discord ?? ""} pattern={validDiscordRe}
+					<Input {...dis} value={userInfo.discord ?? ""} pattern={validDiscordRe}
 						valueChange={v => modInfo("discord", v.length > 0 ? v : null)} />
 
 					<Divider />
 
-					<Checkbox checked={userInfo.inPerson != null} valueChange={v => {
+					<Checkbox {...dis} checked={userInfo.inPerson != null} valueChange={v => {
 						modInfo("inPerson", v ? (userInfo.inPerson ?? {}) : null);
 					}} label="Will you be attending in person?" />
 
@@ -368,13 +370,13 @@ export default function RegistrationEditor() {
 								{data.hasResume
 									&& <Anchor onClick={() => getResume.call()}>Download your resume</Anchor>}
 								<div className="flex flex-row gap-2">
-									<FileInput disabled={loading} maxSize={resumeMaxSize}
-										mimeTypes={["application/pdf"]} onUpload={x => {
-										void toBase64(x[0]).then(base64 => {
-											updateResume.call({ type: "add", base64 });
-										});
-									}} />
-									{data.hasResume && <Button onClick={() => {
+									<FileInput {...dis} maxSize={resumeMaxSize} mimeTypes={["application/pdf"]}
+										onUpload={x => {
+											void toBase64(x[0]).then(base64 => {
+												updateResume.call({ type: "add", base64 });
+											});
+										}} />
+									{data.hasResume && <Button {...dis} onClick={() => {
 										updateResume.call({ type: "remove" });
 									}} type="button">
 										Remove resume
@@ -385,22 +387,21 @@ export default function RegistrationEditor() {
 
 							<div className="flex flex-col gap-1">
 								<Text v="bold">Papa Johns pizza</Text>
-								<Select
+								<Select {...dis}
 									options={[
 										{ label: "Unset", value: "unset" },
 										{ label: "I don't want dinner", value: "none" },
 										{ label: "Cheese", value: "cheese" },
 										{ label: "Pepperoni", value: "pepperoni" },
 										{ label: "Sausage", value: "sausage" },
-									] as const}
-									value={userInfo.inPerson?.dinner ?? "unset" as const}
-									setValue={v => modInPerson("dinner", v == "unset" ? undefined : v)} />
+									] as const} value={userInfo.inPerson?.dinner ?? "unset" as const} setValue={v =>
+									modInPerson("dinner", v == "unset" ? undefined : v)} />
 								{makeMissingAlert("dinner", "Dinner choice")}
 							</div>
 
 							<div className="flex flex-col gap-1">
 								<Text v="bold">Subway's sandwich</Text>
-								<Select
+								<Select {...dis}
 									options={[
 										{ label: "Unset", value: "unset" },
 										{ label: "I don't want lunch", value: "none" },
@@ -408,9 +409,8 @@ export default function RegistrationEditor() {
 										{ label: "Tuna", value: "tuna" },
 										{ label: "Ham", value: "ham" },
 										{ label: "Veggie", value: "veggie" },
-									] as const}
-									value={userInfo.inPerson?.lunch ?? "unset" as const}
-									setValue={v => modInPerson("lunch", v == "unset" ? undefined : v)} />
+									] as const} value={userInfo.inPerson?.lunch ?? "unset" as const} setValue={v =>
+									modInPerson("lunch", v == "unset" ? undefined : v)} />
 								{makeMissingAlert("lunch", "Lunch choice")}
 							</div>
 
@@ -422,21 +422,21 @@ export default function RegistrationEditor() {
 										unisex
 									</Anchor>, so be sure to select the right size.
 								</Text>
-								<Select
+								<Select {...dis}
 									options={[{ label: "Unset", value: "unset" }, {
 										label: "I don't want a shirt",
 										value: "none",
 									}, ...shirtSizes.map(v => ({ label: v.toUpperCase(), value: v }))] as {
 										label: string;
 										value: "unset" | InPerson["shirtSize"];
-									}[]}
-									value={userInfo.inPerson.shirtSize ?? "unset" as const}
-									setValue={v => modInPerson("shirtSize", v == "unset" ? undefined : v)} />
+									}[]} value={userInfo.inPerson.shirtSize ?? "unset" as const} setValue={v =>
+									modInPerson("shirtSize", v == "unset" ? undefined : v)} />
 								{makeMissingAlert("shirtSize", "Shirt size")}
 							</div>
 
 							{userInfo.inPerson.shirtSize != "none"
-								&& <ShirtPreview info={{ info: userInfo, team, organizer: data?.organizer == true }}
+								&& <ShirtPreview {...dis}
+									info={{ info: userInfo, team, organizer: data?.organizer == true }}
 									setSeed={s => {
 										modInfo("shirtSeed", s);
 									}} setHue={h => {
@@ -472,7 +472,8 @@ export default function RegistrationEditor() {
 							</Anchor>.
 						</p>
 
-						<Checkbox checked={userInfo.agreeRules} valueChange={v => modInfo("agreeRules", v)}
+						<Checkbox {...dis} checked={userInfo.agreeRules}
+							valueChange={v => modInfo("agreeRules", v)}
 							label="Do you agree to follow the rules of the open contest?" />
 						{makeMissingAlert("rules", "Your consent to rules")}
 					</>}

@@ -19,6 +19,7 @@
 	"excludes": [
 		"**/*-lock.json",
 		"devdocs",
+		"vdo.ninja",
 		"!scripts/manage.ts"
 	],
 	"plugins": [

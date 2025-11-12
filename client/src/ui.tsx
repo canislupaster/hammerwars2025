@@ -248,9 +248,15 @@ export const ThemeSpinner = (
 		)} />;
 
 export const Loading = (
-	{ children, ...props }: ComponentProps<typeof ThemeSpinner> & { children?: ComponentChildren },
+	{ children, className, ...props }: ComponentProps<typeof ThemeSpinner> & {
+		children?: ComponentChildren;
+	},
 ) =>
-	<div className="h-full w-full flex flex-col items-center justify-center py-16 px-20 gap-3">
+	<div
+		className={twMerge(
+			"h-full w-full flex flex-col items-center justify-center py-16 px-20 gap-3",
+			className,
+		)}>
 		<ThemeSpinner size="lg" {...props} />
 		{children}
 	</div>;

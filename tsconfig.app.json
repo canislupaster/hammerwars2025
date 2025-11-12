@@ -24,7 +24,8 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "allowJs": true
   },
   "include": [
     "client/src",

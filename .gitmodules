@@ -1,3 +1,6 @@
 [submodule "devdocs"]
 	path = devdocs
 	url = https://github.com/canislupaster/hammerwars2025-devdocs.git
+[submodule "vdo.ninja"]
+	path = vdo.ninja
+	url = https://github.com/canislupaster/vdo.ninja.git
