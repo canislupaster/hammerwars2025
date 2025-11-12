@@ -142,7 +142,7 @@ export type TeamContestProperties = {
 export type DuelLayout = "left" | "both" | "right" | "score";
 
 export type PresentationState = Readonly<
-	{ type: "none" | "scoreboard" } | { type: "countdown"; to: number; title: string } | {
+	({ type: "none" | "scoreboard" } | { type: "countdown"; to: number; title: string } | {
 		type: "submissions";
 		problems: {
 			label: string;
@@ -155,12 +155,11 @@ export type PresentationState = Readonly<
 			}[];
 		}[];
 		teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
-	} | { type: "image"; src: string } | { type: "video"; src: string; logo?: string } | {
-		type: "duel";
-		layout: DuelLayout;
-		problemLabels: string[];
-		players: { name: string; src?: string; solved: Set<string> }[];
-	}
+	} | { type: "live"; src: string } | { type: "image"; src: string } | {
+		type: "video";
+		src: string;
+		logo?: string;
+	} | { type: "duel" }) & { liveOverlaySrc?: string }
 >;
 
 export type SubmissionRankings = {
@@ -180,11 +179,17 @@ export type SubmissionRankings = {
 	}[];
 	teamVerdicts: ReadonlyMap<number, ReadonlyMap<string, number>>;
 };
+export type DuelState = {
+	cfContestId: number;
+	layout: DuelLayout;
+	players: { name: string; cf: string; src?: string }[];
+} | null;
 
 export type ContestProperties = {
 	registrationEnds: number | null;
 	registrationOpen: boolean;
 	onlineRegistrationOpen: boolean;
+	registrationOpenEmails: Set<string>;
 	domJudgeCid: string;
 	// forward: skip until team/prob is over or AC, backward: stop at when team/prob occurs
 	resolveIndex: { type: "index"; index: number } | {
@@ -196,18 +201,9 @@ export type ContestProperties = {
 	focusTeamId: number | null;
 	team: TeamContestProperties;
 	organizerTeamId: number | null;
-	presentation: {
-		queue:
-			({
-				type: "duel";
-				cfContestId: number;
-				layout: DuelLayout;
-				players: { name: string; cf: string; src?: string }[];
-			} | PresentationState & {
-				type: "countdown" | "submissions" | "image" | "video" | "scoreboard";
-			})[];
-		current: number;
-	};
+	presentation: { queue: PresentationState[]; current: number };
+	duel: DuelState;
+	live: { name: string; src: string; active: boolean; overlay: boolean }[];
 	daemonUpdate: { version: number; source: string } | null;
 };
 
@@ -276,6 +272,8 @@ export type AdminTeamData = {
 	name: string;
 	domJudgeId: string | null;
 	domJudgePassword: string | null;
+	printerName: string | null;
+	unregisterMachineTimeMs: number | null;
 	joinCode: string;
 	logoId: number | null;
 };
@@ -369,7 +367,9 @@ export type API = {
 				teamProperties: TeamContestProperties;
 				lastAnnouncementId: number | null;
 				daemonVersion: number | null;
+				printerName: string | null;
 				teamFiles: number[];
+				unregisterMachineTimeMs: number | null;
 			};
 		};
 	};
@@ -384,13 +384,20 @@ export type API = {
 	};
 	getScoreboard: { response: Scoreboard };
 	scoreboard: { feed: true; response: Scoreboard };
-	presentation: { feed: true; response: PresentationState };
+	presentation: {
+		feed: true;
+		request: { live: boolean };
+		response: PresentationState & { onlyOverlayChange?: boolean };
+	};
+	duel: { feed: true; response: DuelState };
 	screenshot: { request: { team: number; data: string; mac: string } };
 	getPreFreezeSolutions: {
 		request: { label: string; intendedSolution: string }[];
 		response: SubmissionRankings;
 	};
-	getPresentationQueue: { response: ContestProperties["presentation"] };
+	getPresentationQueue: {
+		response: ContestProperties["presentation"] & { live: ContestProperties["live"] };
+	};
 };
 
 export type ServerResponse<K extends keyof API> = { type: "error"; error: APIErrorObject } | {
@@ -518,7 +525,7 @@ export class APIClient {
 		try {
 			const abort = new AbortController();
 			const f = args[args.length-1] as AbortSignal | undefined;
-			if (f != undefined) {
+			if (f != undefined && f instanceof AbortSignal) {
 				const cb = () => abort.abort(new AbortError(false));
 				f.addEventListener("abort", cb);
 				disp.defer(() => f.removeEventListener("abort", cb));

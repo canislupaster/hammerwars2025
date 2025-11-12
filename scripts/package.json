@@ -4,7 +4,7 @@
   "type": "module",
   "description": "",
   "scripts": {
-    "daemon": "pnpm exec tsx daemon.ts"
+    "daemon": "pnpm exec tsx --use-system-ca daemon.ts"
   },
   "keywords": [],
   "author": "",

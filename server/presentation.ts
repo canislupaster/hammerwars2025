@@ -1,24 +1,8 @@
-import { ContestProperties, PresentationState, SubmissionRankings } from "../shared/util";
+import { ContestProperties, DuelState, PresentationState,
+	SubmissionRankings } from "../shared/util";
 import { getProperty, Mutable, propertiesChanged, transaction } from "./db";
 import { domJudge } from "./domjudge";
 import { openai } from "./main";
-
-async function getPresentationState(
-	prop: ContestProperties["presentation"],
-): Promise<PresentationState> {
-	const cur = prop.queue[prop.current];
-	if (cur == null) {
-		return { type: "none" };
-	} else if (
-		cur.type == "countdown" || cur.type == "submissions" || cur.type == "image"
-		|| cur.type == "video" || cur.type == "scoreboard"
-	) {
-		return cur;
-	} else if (cur.type == "duel") {
-		throw new Error("unsupported");
-	}
-	return cur satisfies never;
-}
 
 export async function evalSolutionQuality(
 	source: string,
@@ -125,26 +109,58 @@ export async function evalSolutions(
 	}));
 }
 
+class Duel {
+	state = new Mutable<DuelState>(null);
+
+	async #codeforces(path: string) {
+	}
+}
+
 class Presentation {
 	state = new Mutable<PresentationState>({ type: "none" });
+	liveState = new Mutable<PresentationState & { onlyOverlayChange?: boolean }>({ type: "none" });
 	async #loop() {
-		let last = await transaction(async trx =>
-			await getProperty(trx, "presentation") ?? { queue: [], current: 0 }
+		let [last, lastLive] = await transaction(async trx =>
+			[
+				await getProperty(trx, "presentation") ?? { queue: [], current: 0 },
+				await getProperty(trx, "live") ?? [],
+			] as const
 		);
-		let changed = true;
+
+		let changed = true, liveChanged = true, lastActiveLiveSrc: string | null = null;
 		propertiesChanged.on(c => {
 			if (c.k == "presentation") {
 				last = c.v;
 				changed = true;
+			} else if (c.k == "live") {
+				lastLive = c.v;
+				liveChanged = true;
 			}
 		});
+
 		while (true) {
 			try {
+				const newState = changed;
 				while (changed) {
 					changed = false;
-					this.state.v = await getPresentationState(last);
+					liveChanged = true;
+					this.state.v = last.queue[last.current] ?? { type: "none" };
 				}
-				await propertiesChanged.waitFor(x => x.k == "presentation");
+
+				if (liveChanged) {
+					liveChanged = false;
+					const activeLive = lastLive.find(x => x.active);
+					const overlayLive = lastLive.find(x => x.overlay);
+					const onlyOverlayChange = !newState && lastActiveLiveSrc == activeLive?.src;
+					lastActiveLiveSrc = activeLive?.src ?? null;
+					this.liveState.v = {
+						...activeLive != null ? { type: "live", src: activeLive.src } : this.state.v,
+						liveOverlaySrc: overlayLive?.src,
+						onlyOverlayChange,
+					};
+				}
+
+				await propertiesChanged.waitFor(x => x.k == "presentation" || x.k == "live");
 			} catch (e) {
 				console.error("presentation error", e);
 			}
@@ -157,3 +173,5 @@ class Presentation {
 
 export const presentation = new Presentation();
 presentation.start();
+
+export const duel = new Duel();

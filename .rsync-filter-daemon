@@ -1,8 +1,17 @@
 - node_modules/
++ /shared
++ /shared/*.ts
++ /devdocs
 - /devdocs/tmp
 + /devdocs/**
 + /scripts
++ /scripts/compare.cpp
++ /scripts/Oxanium-VariableFont_wght.ttf
++ /scripts/wallpaper.png
++ /scripts/run
++ /scripts/run.mts
 + /scripts/*.ts
++ /scripts/daemon.service
 + package.json
 + /pnpm-lock.yaml
 + /pnpm-workspace.yaml

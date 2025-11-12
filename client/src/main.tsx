@@ -8,7 +8,7 @@ import { APIError } from "../../shared/util";
 import { LocalStorage, useRequest } from "./clientutil";
 import { Home } from "./home";
 import { Alert, Anchor, Button, Card, Container, GotoContext, Input, Loading, Text, ThemeContext,
-	useGoto, useTimeUntil, useTitle } from "./ui";
+	useGoto, useTitle } from "./ui";
 
 export function Footer() {
 	return <div className="flex flex-col items-center w-full py-5 px-5">

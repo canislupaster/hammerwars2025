@@ -1,4 +1,4 @@
-#!tsx
+#! tsx
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -44,16 +44,15 @@ async function exec(cmd: string, args: string[]) {
 
 async function detectJavaMainClass(file: string): Promise<string> {
 	const src = await readFile(file, "utf-8");
-	const pkgMatch = src.match(/^\s*package\s+([\w.]+)\s*;/m);
-	const classMatch = src.match(/\bpublic\s+class\s+([A-Z]\w*)/);
-	const pkg = pkgMatch?.[1];
+	const classMatch = src.match(/\bpublic\s+(?:final|sealed|abstract\s+)?class\s+([A-Z]\w*)/);
 	const className = classMatch?.[1] ?? basename(file).replace(/\.java$/i, "");
-	return pkg != null ? `${pkg}.${className}` : className;
+	return className;
 }
 
 function kotlinMainClass(file: string): string {
 	const base = basename(file).replace(/\.kt$/i, "");
-	return `${base}Kt`;
+	const underscored = base.split(" ").join("_");
+	return `${underscored[0].toUpperCase()}${underscored.slice(1)}Kt`;
 }
 
 const home = process.env["HOME"]!;
@@ -125,7 +124,7 @@ export const languages = [
 		domJudgeId: "zig",
 		exts: ["zig"],
 		async compile(file: string, out: string) {
-			await exec("zig", ["build-exe", file, "-O", "ReleaseFast", "-femit-bin", out]);
+			await exec("zig", ["build-exe", file, "-O", "ReleaseFast", `-femit-bin=${out}`]);
 		},
 		async run(out: string) {
 			return [out];
@@ -147,7 +146,7 @@ export const languages = [
 		name: "typescript",
 		domJudgeId: "tsx",
 		exts: ["ts", "tsx"],
-		compiledExt: ".js",
+		compiledExt: "js",
 		async compile(file: string, out: string) {
 			await withTmp("ts-tmp", async dir => {
 				await exec("tsc", [
@@ -178,7 +177,7 @@ export const languages = [
 		name: "java",
 		domJudgeId: "java",
 		exts: ["java"],
-		compiledExt: ".jar",
+		compiledExt: "jar",
 		async compile(file: string, out: string) {
 			await withTmp("java-classes", async dir => {
 				// 1) compile classes into a temp classes dir
@@ -202,25 +201,15 @@ export const languages = [
 		name: "kotlin",
 		domJudgeId: "kt",
 		exts: ["kt"],
-		compiledExt: ".jar",
+		compiledExt: "jar",
 		async compile(file: string, out: string) {
 			await withTmp("kotlin-classes", async dir => {
-				// 1) compile class files
 				await exec("kotlinc", [file, "-d", dir]);
-
-				// 2) choose main class (common single-file case)
-				const mainClass = kotlinMainClass(file);
-
-				// 3) create runnable JAR (kotlin runtime is typically provided by runner; if you
-				//    need a fat jar, use kotlinc -include-runtime -d out.jar instead of the jar step)
-				await exec("jar", ["cfe", out, mainClass, "-C", dir, "."]);
+				await exec("jar", ["cf", out, "-C", dir, "."]);
 			});
 		},
-		async run(out: string) {
-			// If your runtime env doesn't preload Kotlin stdlib, switch compile to:
-			// kotlinc <file> -include-runtime -d out.jar
-			// and keep the run command the same.
-			return ["java", "-jar", out];
+		async run(out: string, src: string) {
+			return ["kotlin", "-classpath", out, kotlinMainClass(src)];
 		},
 	},
 	{
@@ -396,9 +385,11 @@ async function check(
 async function promptSubmit(language: Language, label: string, file: string) {
 	const rl = readline.createInterface(process.stdin, process.stdout);
 	const ans = await new Promise<string>(res => rl.question("submit? (y/n) ", res));
+	rl.close();
+
 	if (ans.toLowerCase().trim().startsWith("y")) {
 		gray("submitting...");
-		await exec("submit", ["-p", label, "-l", language.domJudgeId, file]);
+		await exec("submit", ["-y", "-p", label, "-l", language.domJudgeId, file]);
 	}
 }
 
@@ -413,7 +404,7 @@ async function run(
 ) {
 	let cmd: string[];
 	if ("run" in language) {
-		cmd = await language.run(out);
+		cmd = await language.run(out, sourceFile);
 	} else {
 		cmd = [out];
 	}
@@ -442,6 +433,10 @@ async function run(
 			const sampIn = join(problem.path, `${samp}.in`);
 			const sampAns = join(problem.path, `${samp}.ans`);
 			const output = join(dir, `${samp}-output.txt`);
+
+			for (const line of (await readFile(sampIn, "utf-8")).split("\n")) {
+				console.log(styleText(["gray", "italic"], `> ${line}`));
+			}
 
 			const prog = await startChildProgram({
 				prog: cmd[0],
@@ -475,7 +470,16 @@ async function main() {
 		options: {
 			language: { type: "string", short: "l" },
 			problem: { type: "string", short: "p" },
-			path: { type: "string", default: defaultDirs.find(v => existsSync(v)) },
+			path: {
+				type: "string",
+				default: (await Promise.all(defaultDirs.map(async v =>
+					[
+						v,
+						// make sure it exists and we can descend
+						await readdir(v).catch(() => false) != false,
+					] as const
+				))).find(v => v[1])?.[0],
+			},
 			help: { type: "boolean", short: "h" },
 		},
 		strict: true,
@@ -500,7 +504,7 @@ Examples:
 Description:
   Compiles (if needed) and runs the given source file. If a problem label is provided,
   the program will automatically run against all sample inputs in the matching problem folder,
-  check outputs using the problem's checker, and prompt for submission if all tests pass.
+  check outputs using the problem's checker, and prompt for submission if samples pass.
 `.trim());
 		process.exit(0);
 	}

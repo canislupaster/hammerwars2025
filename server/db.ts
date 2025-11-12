@@ -11,7 +11,9 @@ type Database = {
 		name: string;
 		domJudgeId: string | null;
 		domJudgePassword: string | null;
+		unregisterMachineTimeMs: number | null;
 		funFact: string | null;
+		printerName: string | null;
 	};
 	teamLogo: { id: GeneratedAlways<number>; team: number; logo: Buffer; logoMime: string };
 	teamFile: { id: GeneratedAlways<number>; team: number; name: string; fileData: Buffer };
@@ -164,6 +166,23 @@ const migrator = new Migrator({
 					},
 					async down(db) {
 						await db.schema.dropTable("teamFile").execute();
+					},
+				} satisfies Migration,
+				"4_team_unregister": {
+					async up(db) {
+						await db.schema.alterTable("team").addColumn("unregisterMachineTimeMs", "integer")
+							.execute();
+					},
+					async down(db) {
+						await db.schema.alterTable("team").dropColumn("unregisterMachineTimeMs").execute();
+					},
+				} satisfies Migration,
+				"5_team_printer_name": {
+					async up(db) {
+						await db.schema.alterTable("team").addColumn("printerName", "text").execute();
+					},
+					async down(db) {
+						await db.schema.alterTable("team").dropColumn("printerName").execute();
 					},
 				} satisfies Migration,
 			};

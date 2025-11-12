@@ -4,8 +4,8 @@ import { Hono } from "hono";
 import { JSDOM } from "jsdom";
 import { ChildProcess, execFile, ExecOptionsWithStringEncoding, spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { copyFile, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join, normalize } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import sharp from "sharp";
 import { Canvas, FontLibrary, loadImage, loadImageData } from "skia-canvas";
@@ -51,6 +51,11 @@ function register(...params: RegisterParams) {
 	}
 }
 
+function restart(): never {
+	// this definitely stops the process but it seems like systemd is still restarting it very funny (i don't care 🤓)
+	return process.execve!(process.execPath, process.argv.slice(1));
+}
+
 const client = new APIClient(process.env["API_URL"]!, {
 	apiKey: process.env["API_KEY"]!,
 	session: null,
@@ -59,6 +64,8 @@ const client = new APIClient(process.env["API_URL"]!, {
 type Data = Partial<
 	{
 		teamId: number;
+		teamIdWorks: boolean;
+		registeredTimeMs: number;
 		lastAnnouncementId: number;
 		latestAnnouncementId: number | null;
 		lastScreenshot: number;
@@ -72,6 +79,7 @@ type Data = Partial<
 		files: Map<number, string>;
 		latestFileIds: number[];
 		lastActive: DOMJudgeActiveContest;
+		printerName: string | null;
 	}
 >;
 
@@ -90,7 +98,7 @@ if (await stat("data.json").catch(() => false) != false) {
 	data = parseExtra(await readFile("data.json", "utf-8")) as Readonly<Data>;
 }
 
-async function update(newData: Data) {
+function update(newData: Data) {
 	const old = data;
 	data = { ...data, ...newData };
 	// no overlapping writes!
@@ -171,15 +179,23 @@ async function exec(cmd: string, args: string[] | null = null, options?: ExecOpt
 }
 
 async function getEnv(proc: string, retry: number = Infinity) {
-	let pid = "";
-	while (pid == "" && retry-- > 0) {
+	let pids: string[] = [];
+	while (pids.length == 0 && retry-- > 0) {
 		await delay(500);
-		const pids = (await exec("pgrep", [proc], { quiet: true }).catch(() => null))?.stdout ?? "";
-		pid = pids.split("\n")[0];
+		pids = (await exec("pgrep", [proc], { quiet: true }).catch(() =>
+			null
+		))?.stdout?.trim()?.split("\n") ?? [];
 	}
 
-	if (pid == "") return null;
-	return parse((await readFile(join("/proc", pid, "/environ"), "utf-8")).replaceAll("\0", "\n"));
+	for (const p of pids) {
+		const env = parse(
+			(await readFile(join("/proc", p, "/environ"), "utf-8")).replaceAll("\0", "\n"),
+		);
+		if (env["USER"] != "team") continue;
+		return env;
+	}
+
+	return null;
 }
 
 const getXfceEnv = () => getEnv("xfce4-session");
@@ -190,13 +206,11 @@ if (!isFinite(teamUid) || !isFinite(teamGid)) {
 	throw new Error("Team user id or group id not found");
 }
 
-const runTeam = async (cmd: string, args: string[] | null = null, options?: ExecOpts) =>
-	await exec(cmd, args, {
-		env: await getXfceEnv() ?? {},
-		uid: teamUid,
-		gid: teamGid,
-		...options ?? {},
-	});
+async function runTeam(cmd: string, args: string[] | null = null, options?: ExecOpts) {
+	const env = await getXfceEnv();
+	if (env == null) throw new Error("no team xfce session, they probably aren't logged in");
+	return await exec(cmd, args, { env, uid: teamUid, gid: teamGid, ...options ?? {} });
+}
 
 async function startDevDocs() {
 	let devDocs: ChildProcess | undefined;
@@ -236,7 +250,7 @@ async function updateDomJudgeCookies(old: Data) {
 
 	const state = data.lastState;
 	if (state == null) {
-		await update({ domJudgeCookies: new Map() });
+		update({ domJudgeCookies: new Map() });
 		return;
 	}
 
@@ -276,7 +290,7 @@ async function updateDomJudgeCookies(old: Data) {
 	if (data.lastActive?.cid != null) cookies.push(["domjudge_cid", data.lastActive.cid]);
 
 	console.log("updated domjudge cookies");
-	await update({ domJudgeCookies: new Map(cookies) });
+	update({ domJudgeCookies: new Map(cookies) });
 }
 
 register("update", "domjudge cookies", updateDomJudgeCookies);
@@ -301,7 +315,7 @@ register("update", "firewall", updateFirewall);
 
 async function updateVisible(old: Data) {
 	if (data.visibleDirectories == undefined) {
-		await update({ visibleDirectories: new Set() });
+		update({ visibleDirectories: new Set() });
 	} else if (
 		data.visibleDirectories.symmetricDifference(old.visibleDirectories ?? new Set()).size == 0
 	) {
@@ -314,7 +328,8 @@ async function updateVisible(old: Data) {
 	if (invis.length > 0) await exec("chmod", ["a-rwx", ...concatDirs(invis)]);
 
 	const vis = [...data.visibleDirectories?.intersection(dirs)?.values() ?? []];
-	if (vis.length > 0) await exec("chmod", ["a+r", ...concatDirs(vis)]);
+	console.log(`updating visible directories to ${vis.join(", ")}`);
+	if (vis.length > 0) await exec("chmod", ["a=rX", ...concatDirs(vis)]);
 }
 
 register("update", "visibility", updateVisible);
@@ -326,7 +341,7 @@ async function setTeamId() {
 
 		const outNum = Number.parseInt(out);
 		if (isFinite(outNum)) {
-			await update({ teamId: outNum });
+			update({ teamId: outNum, registeredTimeMs: Date.now() });
 		} else {
 			await runTeam("zenity --error --title='Invalid team ID'");
 		}
@@ -364,7 +379,7 @@ async function takeScreenshots() {
 			await delay(Math.max(0, data.lastScreenshot+screenshotInterval-Date.now()));
 		}
 
-		await update({ lastScreenshot: Date.now() });
+		update({ lastScreenshot: Date.now() });
 
 		if (data.screenshotsEnabled == true) {
 			const screenshotPath = process.env["SCREENSHOT_PATH"]!;
@@ -421,25 +436,47 @@ async function processFeed() {
 	const teamId = data.teamId;
 
 	console.log(`connecting to feed (team id = ${teamId})`);
+
 	const feed = client.feed("teamFeed", { id: teamId });
 	console.log("connected to feed");
 
-	for await (const event of feed) {
-		const state = event.state.domJudgeCredentials != null
-			? { user: event.state.domJudgeCredentials.user, pass: event.state.domJudgeCredentials.pass }
-			: undefined;
+	try {
+		for await (const event of feed) {
+			const state = event.state.domJudgeCredentials != null
+				? { user: event.state.domJudgeCredentials.user, pass: event.state.domJudgeCredentials.pass }
+				: undefined;
 
-		const vis = new Set(event.state.teamProperties.visibleDirectories);
-		await update({
-			firewall: event.state.teamProperties.firewallEnabled,
-			latestAnnouncementId: event.state.lastAnnouncementId,
-			latestFileIds: event.state.teamFiles,
-			visibleDirectories: vis,
-			screenshotsEnabled: event.state.teamProperties.screenshotsEnabled,
-			lastState: state,
-			lastActive: event.state.domJudgeActiveContest,
-			latestDaemonVersion: event.state.daemonVersion,
-		});
+			const vis = new Set(event.state.teamProperties.visibleDirectories);
+
+			if (
+				event.state.unregisterMachineTimeMs != null && data.registeredTimeMs != null
+				&& event.state.unregisterMachineTimeMs > data.registeredTimeMs
+			) {
+				update({ teamId: undefined, teamIdWorks: undefined });
+				// don't really handle clearing id well yet, just restart
+				return restart();
+			}
+
+			update({
+				teamIdWorks: true,
+				firewall: event.state.teamProperties.firewallEnabled,
+				latestAnnouncementId: event.state.lastAnnouncementId,
+				latestFileIds: event.state.teamFiles,
+				visibleDirectories: vis,
+				screenshotsEnabled: event.state.teamProperties.screenshotsEnabled,
+				lastState: state,
+				lastActive: event.state.domJudgeActiveContest,
+				latestDaemonVersion: event.state.daemonVersion,
+			});
+		}
+	} catch (err: unknown) {
+		if (data.teamIdWorks == true) {
+			throw err;
+		}
+		console.error("couldn't fetch feed", err);
+		console.log("restarting without team id");
+		update({ teamId: undefined });
+		return restart();
 	}
 }
 
@@ -447,8 +484,27 @@ register("bg", "feed", processFeed);
 
 FontLibrary.use("Oxanium", "./Oxanium-VariableFont_wght.ttf");
 
-async function setWallpaper(old: Data) {
-	if (data.teamId == undefined || old.teamId == data.teamId) return;
+const wallpaperPath = "/usr/share/wallpaper.png";
+async function reloadWallpaper() {
+	const props = (await runTeam("xfconf-query -c xfce4-desktop -l")).stdout.split("\n").filter(x =>
+		x.endsWith("last-image")
+	);
+	for (const p of props) {
+		await runTeam("xfconf-query", ["-c", "xfce4-desktop", "-p", p, "-s", ""]);
+	}
+	await delay(500);
+	for (const p of props) {
+		await runTeam("xfconf-query", ["-c", "xfce4-desktop", "-p", p, "-s", wallpaperPath]);
+	}
+}
+
+async function setWallpaper() {
+	if (data.teamId == undefined) {
+		await copyFile("./wallpaper.png", wallpaperPath);
+		await reloadWallpaper();
+	}
+
+	while (data.teamId == undefined) await waitForDataChange();
 
 	const info = await client.request("teamInfo", { id: data.teamId });
 	const w = 3900, h = 2340;
@@ -489,21 +545,24 @@ async function setWallpaper(old: Data) {
 		);
 	}
 
-	await writeFile("/usr/share/wallpaper.png", await canvas.png);
+	await writeFile(wallpaperPath, await canvas.png);
 	console.log("generated wallpaper");
+	await reloadWallpaper();
+
 	await forever;
 }
 
-register("update", "wallpaper", setWallpaper);
+register("bg", "wallpaper", setWallpaper);
 
 async function copyRunner() {
 	const runPath = "/usr/local/bin/run";
-	const comparePath = join(dirname(runPath), "compare.cpp");
 
-	await copyFile("./run.ts", runPath);
-	await exec("chmod", ["a+x", runPath]);
-	await copyFile("./compare.cpp", comparePath);
-	await exec("chmod", ["a+r", runPath, comparePath]);
+	await copyFile("./run", runPath);
+	await exec("chmod", ["a=rx", runPath]);
+	for (const d of ["compare.cpp", "run.mts"]) {
+		await copyFile(d, join(dirname(runPath), d));
+		await exec("chmod", ["a=r", d]);
+	}
 
 	console.log("copied run script");
 	await forever;
@@ -524,27 +583,22 @@ async function announcement() {
 	});
 
 	if (
-		announcement == null // prevent inf loop
+		announcement == null
 		|| (data.lastAnnouncementId != null && announcement.id <= data.lastAnnouncementId)
 	) {
-		console.error(
-			`expected announcement with id ${data.latestAnnouncementId} > ${
-				data.lastAnnouncementId ?? -1
-			}, none found`,
-		);
 		return;
 	}
+
+	update({ ...data, lastAnnouncementId: announcement.id });
 
 	const sec = Math.floor((Date.now()-announcement.time)/1000);
 	await runTeam("zenity", [
 		"--info",
 		"--text",
-		announcement.body,
+		`${announcement.body}\n\nSent ${sec} seconds ago.`,
 		"--title",
-		`${announcement.title}\n\nSent ${sec} seconds ago.`,
+		announcement.title,
 	]);
-
-	await update({ ...data, lastAnnouncementId: announcement.id });
 }
 
 register("update", "announcement", announcement);
@@ -555,23 +609,33 @@ async function files() {
 	const oldFileSet = new Set(data.files?.keys() ?? []);
 	const newFileSet = new Set(data.latestFileIds ?? []);
 	if (oldFileSet.symmetricDifference(newFileSet).size == 0) return;
+	const teamFilePath = "/home/team/files";
+
+	await mkdir(join(teamFilePath), { recursive: true });
+	await exec("chmod", ["a=rwx", teamFilePath]);
 
 	const newFiles = new Map(data.files);
 	for (const deleteFile of oldFileSet.difference(newFileSet)) {
 		const name = data.files!.get(deleteFile)!;
-		await rm(join("/home/team", name), { force: true });
+		console.log(`deleting ${name}`);
+		await rm(join(teamFilePath, name), { force: true });
 		newFiles.delete(deleteFile);
 	}
 
 	for (const downloadFile of newFileSet.difference(oldFileSet)) {
 		const { name, base64 } = await client.request("getTeamFile", { id: downloadFile });
-		const path = join("/home/team", name);
+		console.log(`downloading ${name}`);
+		const path = normalize(join(teamFilePath, name));
+		if (!path.startsWith(teamFilePath)) {
+			console.error(`skipping ${path}`);
+			continue;
+		}
 		await writeFile(path, Buffer.from(base64, "base64"));
-		await exec("chmod", ["a+rw", path]);
+		await exec("chmod", ["a=rw", path]);
 		newFiles.set(downloadFile, name);
 	}
 
-	await update({ ...data, files: newFiles });
+	update({ ...data, files: newFiles });
 }
 
 register("update", "files", files);
@@ -591,8 +655,17 @@ async function updateDaemon() {
 	}
 
 	await writeFile(import.meta.filename, daemonSource.source);
-	await update({ ...data, currentDaemonVersion: daemonSource.version });
-	process.execve!(process.execPath, process.argv.slice(1));
+	update({ ...data, currentDaemonVersion: daemonSource.version });
+	restart();
 }
 
 register("update", "update daemon", updateDaemon);
+
+// not sure if this works but why not, does nothing unless i tell it to
+async function setDefaultPrinter(old: Data) {
+	if (data.printerName != old?.printerName && data.printerName != null) {
+		await exec("lpadmin", ["-d", data.printerName]);
+	}
+}
+
+register("update", "default printer", setDefaultPrinter);

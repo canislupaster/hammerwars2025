@@ -18,7 +18,7 @@ import { domJudge } from "./domjudge.ts";
 import { makeVerificationEmail } from "./email.ts";
 import { auth, Context, env, err, genKey, getKey, HonoEnv, keyAuth, makeRoute, matchKey, openai,
 	rootUrl, sesClient } from "./main.ts";
-import { evalSolutions, presentation } from "./presentation.ts";
+import { duel, evalSolutions, presentation } from "./presentation.ts";
 
 const passwordSchema = z.string().min(8).max(100);
 const nameSchema = z.string().regex(new RegExp(validNameRe));
@@ -70,24 +70,30 @@ const presentationSubmissionsSchema = z.object({
 	teamVerdicts: z.map(z.number(), z.map(z.string(), z.number())),
 });
 
-const presentationDuelSchema = z.object({
-	type: z.literal("duel"),
+const duelSchema = z.object({
 	cfContestId: z.number(),
 	layout: z.enum(["left", "both", "right", "score"]),
 	players: z.array(z.object({ name: z.string(), cf: z.string(), src: z.string().optional() })),
-});
+}).nullable();
 
 const presentationSchema = z.object({
 	queue: z.union([
-		presentationDuelSchema,
+		z.object({ type: z.literal("duel") }),
 		presentationCountdownSchema,
 		presentationSubmissionsSchema,
-		z.object({ type: z.literal("image"), src: z.string() }),
+		z.object({ type: z.literal("image").or(z.literal("live")), src: z.string() }),
 		z.object({ type: z.literal("video"), src: z.string(), logo: z.string().optional() }),
 		z.object({ type: z.literal("scoreboard") }),
 	]).array(),
 	current: z.int(),
 });
+
+const liveSchema = z.object({
+	name: nameSchema,
+	src: z.string(),
+	active: z.boolean(),
+	overlay: z.boolean(),
+}).array();
 
 const teamFileSchema = z.object({
 	name: z.string().regex(new RegExp(validFilenameRe)),
@@ -292,7 +298,13 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 		},
 	});
 
-	const checkRegistrationOpen = async (trx: DBTransaction, inPerson: boolean) => {
+	const checkRegistrationOpen = async (trx: DBTransaction, inPerson: boolean, userId?: number) => {
+		if (userId != null) {
+			const user = await getDbCheck(trx, "user", userId);
+			const emails = await getProperty(trx, "registrationOpenEmails");
+			if (emails?.has(user.email) == true) return;
+		}
+
 		if (!inPerson && await getProperty(trx, "onlineRegistrationOpen") != true) {
 			throw err("Online registration is not open");
 		} else if (inPerson) {
@@ -324,7 +336,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 					let submitted: UserInfo | null = null;
 					if (req.submit) {
-						await checkRegistrationOpen(trx, req.info.inPerson != null);
+						await checkRegistrationOpen(trx, req.info.inPerson != null, userId);
 
 						const parsed = userInfoSchema.safeParse(req.info);
 						if (!parsed.success) throw err("Can't submit: not fully filled out");
@@ -387,7 +399,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 				if (u.team == null) {
 					// dont allow in person team creation after close
-					await checkRegistrationOpen(trx, u.data.submitted?.inPerson != null);
+					await checkRegistrationOpen(trx, u.data.submitted?.inPerson != null, userId);
 				}
 
 				let teamId: number;
@@ -457,6 +469,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				await checkRegistrationOpen(
 					trx,
 					[u, ...mems].some(v => v.data.submitted?.inPerson != null),
+					userId,
 				);
 
 				if (mems.length+1 > teamLimit && team.id != await getProperty(trx, "organizerTeamId")) {
@@ -475,7 +488,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			const userId = await auth(c);
 			await transaction(async trx => {
 				const u = await getDbCheck(trx, "user", userId);
-				await checkRegistrationOpen(trx, u.data.submitted?.inPerson != null);
+				await checkRegistrationOpen(trx, u.data.submitted?.inPerson != null, userId);
 				if (u.team == null) throw err("User is not in a team");
 				await setDb(trx, "user", userId, { team: null });
 				const count = await trx.selectFrom("user").select(s => s.fn.countAll<number>().as("count"))
@@ -566,7 +579,21 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	});
 
 	makeRoute(app, "registrationWindow", {
-		async handler(_c) {
+		async handler(c) {
+			const userId = await auth(c).catch(() => null);
+			if (userId != null) {
+				const [user, emails] = await transaction(
+					async trx => [
+						await getDbCheck(trx, "user", userId),
+						await getProperty(trx, "registrationOpenEmails"),
+					]
+				);
+
+				if (emails?.has(user.email) == true) {
+					return { inPersonOpen: true, inPersonCloses: null, onlineOpen: true };
+				}
+			}
+
 			return await transaction(async trx => ({
 				inPersonOpen: await getProperty(trx, "registrationOpen") ?? false,
 				inPersonCloses: await getProperty(trx, "registrationEnds"),
@@ -603,8 +630,11 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				visibleDirectories: z.string().array(),
 			}),
 			presentation: presentationSchema,
+			duel: duelSchema,
+			live: liveSchema,
 			daemonUpdate: z.object({ version: z.int(), source: z.string() }).nullable(),
 			onlineRegistrationOpen: z.boolean(),
+			registrationOpenEmails: z.set(z.string()),
 		}).partial().strip(),
 		async handler(c, req) {
 			await keyAuth(c, true);
@@ -671,6 +701,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			logoId: logo?.id ?? null,
 			domJudgeId: team.domJudgeId,
 			domJudgePassword: team.domJudgePassword,
+			unregisterMachineTimeMs: team.unregisterMachineTimeMs,
+			printerName: team.printerName,
 			joinCode: team.joinCode,
 		};
 	};
@@ -759,7 +791,9 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				name: nameSchema,
 				domJudgeId: z.string().nullable(),
 				domJudgePassword: z.string().nullable(),
+				printerName: z.string().nullable(),
 				joinCode: z.string(),
+				unregisterMachineTimeMs: z.number().nullable(),
 			}).or(z.object({ id: z.number(), delete: z.literal(true) })),
 		),
 		async handler(c, req) {
@@ -776,6 +810,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 						joinCode: team.joinCode,
 						domJudgeId: team.domJudgeId,
 						domJudgePassword: team.domJudgePassword,
+						printerName: team.printerName,
+						unregisterMachineTimeMs: team.unregisterMachineTimeMs,
 					});
 
 					teamChanged.emit(team.id);
@@ -859,13 +895,13 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	});
 
 	makeRoute(app, "getAnnouncement", {
-		validator: z.object({ team: z.int(), afterId: z.int() }),
+		validator: z.object({ team: z.int(), afterId: z.int().nullable() }),
 		async handler(c, { team, afterId }) {
 			await keyAuth(c, false);
 			return await transaction(trx => {
 				return trx.selectFrom("announcement").select(["id", "body", "title", "time"]).where(a =>
 					a("team", "=", team).or("team", "is", null)
-				).where("id", ">", afterId).orderBy("id", "asc").limit(1).executeTakeFirst();
+				).where("id", ">", afterId ?? -1).orderBy("id", "asc").limit(1).executeTakeFirst();
 			}) ?? null;
 		},
 	});
@@ -887,7 +923,12 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				const files = await transaction(trx =>
 					trx.selectFrom("teamFile").select("id").where("team", "=", id).execute()
 				);
-				return { domJudgeCredentials: cred, teamFiles: files.map(v => v.id) };
+				return {
+					domJudgeCredentials: cred,
+					teamFiles: files.map(v => v.id),
+					printerName: team.printerName,
+					unregisterMachineTimeMs: team.unregisterMachineTimeMs,
+				};
 			};
 
 			const getLastAnnouncement = async () => {
@@ -999,10 +1040,12 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 	makeRoute(app, "presentation", {
 		feed: true,
-		handler: async function* handler(signal) {
+		validator: z.object({ live: z.boolean() }),
+		handler: async function* handler(signal, _c, req) {
+			const x = req.live ? presentation.liveState : presentation.state;
 			while (!signal.aborted) {
-				yield presentation.state.v;
-				await presentation.state.change.wait(signal);
+				yield x.v;
+				await x.change.wait(signal);
 			}
 		},
 	});
@@ -1010,8 +1053,10 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 	makeRoute(app, "getPresentationQueue", {
 		async handler(c) {
 			await keyAuth(c, true);
-			return await transaction(trx => getProperty(trx, "presentation"))
-				?? { queue: [], current: 0 };
+			return await transaction(async trx => ({
+				...await getProperty(trx, "presentation") ?? { queue: [], current: 0 },
+				live: await getProperty(trx, "live") ?? [],
+			}));
 		},
 	});
 
@@ -1044,6 +1089,16 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			await keyAuth(c, false);
 			const file = await transaction(trx => getDbCheck(trx, "teamFile", id));
 			return { name: file.name, base64: file.fileData.toString("base64") };
+		},
+	});
+
+	makeRoute(app, "duel", {
+		feed: true,
+		handler: async function* handler(signal, _c) {
+			while (!signal.aborted) {
+				yield duel.state.v;
+				await duel.state.change.wait(signal);
+			}
 		},
 	});
 }

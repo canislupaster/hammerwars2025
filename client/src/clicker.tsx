@@ -21,6 +21,12 @@ function ClickerQueueItem(
 		details = [["Until", new Date(v.to).toLocaleString()], ["Title", v.title]];
 	} else if (v.type == "submissions") {
 		title = "Submissions";
+	} else if (v.type == "live") {
+		title = "Live";
+		details = [["Source", v.src], [
+			"Preview",
+			<video src={v.src} autoplay muted key={v.src} className="max-h-[20dvh]" />,
+		]];
 	} else if (v.type == "image") {
 		title = "Image";
 		details = [["Source", v.src], [
@@ -140,6 +146,35 @@ function ClickerQueue() {
 				onClick={() => move(1)} className="w-full md:w-auto">
 				Next
 			</Button>
+		</div>
+
+		<Text v="md">Live</Text>
+		<div className="flex flex-row gap-2">
+			{data == null || data?.live.length == 0
+				? <Text>No sources set up.</Text>
+				: data.live.map((v, i) => (<Card key={i} className="">
+					<Text v="md">{v.name}</Text>
+					<div className="flex flex-row gap-2 items-center">
+						{([["overlay", "active"], ["active", "overlay"]] as const).map(([k, ok]) => {
+							return <Button key={k}
+								className={twJoin(v[k] && (k == "overlay" ? bgColor.sky : bgColor.red))} loading={l}
+								onClick={() =>
+									setProperties.call({
+										live: data.live.map((u, j) => ({
+											...u,
+											[ok]: i == j ? false : u[ok],
+											[k]: v[k] ? false : i == j,
+										})),
+									})}>
+								{k[0].toUpperCase()}
+								{k.slice(1)}
+							</Button>;
+						})}
+					</div>
+
+					<Text v="bold">Preview</Text>
+					<video src={v.src} autoplay muted key={v.src} className="max-h-[20dvh]" />
+				</Card>))}
 		</div>
 	</>;
 }

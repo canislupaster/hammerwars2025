@@ -3,10 +3,10 @@
 - node_modules/
 + /server
 + /shared
++ /shared/*.ts
 + /client
 + /client/dist/***
 + /server/*.ts
-+ /shared/*.ts
 + package.json
 + /pnpm-lock.yaml
 + /pnpm-workspace.yaml
