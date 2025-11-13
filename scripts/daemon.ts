@@ -681,7 +681,6 @@ async function configurePrinter(old: Data) {
 		|| data.latestPrinterAddress == old.latestPrinterAddress
 			&& (data.currentPrinter?.address ?? null) == (data.latestPrinterAddress ?? null)
 	) return;
-	const info = await client.request("teamInfo", { id: data.teamId });
 
 	if (data.currentPrinter != null) {
 		console.log(
@@ -702,7 +701,7 @@ async function configurePrinter(old: Data) {
 	if (data.latestPrinterAddress != null) {
 		const ipPort = data.latestPrinterAddress.split(":");
 		const ip = ipPort[0];
-		const port = ipPort.length == 1 ? 631 : Number(ipPort[1]);
+		const port = ipPort.length == 1 ? 9100 : Number(ipPort[1]);
 		if (!isFinite(port)) throw new Error(`invalid printer port ${port}`);
 		const newPrinter = { cupsName: printerName, ip, port, address: data.latestPrinterAddress };
 		console.log(
@@ -714,20 +713,10 @@ async function configurePrinter(old: Data) {
 			newPrinter.cupsName,
 			"-E",
 			"-v",
-			`ipp://${newPrinter.ip}:${newPrinter.port}`,
+			`socket://${newPrinter.ip}:${newPrinter.port}`,
 		]);
 
-		const bannerFile = `
-#CUPS-BANNER
-Show job-id job-name job-originating-user-name time-at-creation
-Header ${info.name}
-Footer HAMMERWARS 2025
-
-`.trimStart();
-
-		await writeFile("/usr/share/cups/banners/standard", bannerFile);
-
-		await exec("lpadmin", ["-p", newPrinter.cupsName, "-o", "job-sheets-default=standard,none"]);
+		await exec("lpadmin", ["-p", newPrinter.cupsName, "-o", "job-sheets-default=none,none"]);
 		await exec("lpadmin", ["-d", newPrinter.cupsName]);
 		await exec("ufw", ["allow", "out", "to", newPrinter.ip, "port", newPrinter.port.toString()]);
 
