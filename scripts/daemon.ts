@@ -359,7 +359,7 @@ register("bg", "team id", setTeamId);
 
 const screenshotInterval = 1000*5;
 async function takeScreenshots() {
-	if (data.teamId == undefined) return;
+	if (data.teamId == undefined) return await forever;
 
 	const macHash = Buffer.from(
 		await crypto.subtle.digest(
@@ -501,7 +501,7 @@ async function setWallpaper() {
 	if (data.teamId == undefined) {
 		await copyFile("./wallpaper.png", wallpaperPath);
 		await reloadWallpaper();
-		return;
+		return await forever;
 	}
 
 	const info = await client.request("teamInfo", { id: data.teamId });

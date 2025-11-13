@@ -964,8 +964,8 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 				if (v == id) emitter.emit({ type: "teamChanged" });
 			}));
 
-			this.use(announcementEvent.on(({ team, id }) => {
-				if (team == null || team == id) emitter.emit({ type: "announcement", id });
+			this.use(announcementEvent.on(({ team, id: announcementId }) => {
+				if (team == null || team == id) emitter.emit({ type: "announcement", id: announcementId });
 			}));
 
 			this.use(domJudge.activeContest.change.on(v => emitter.emit({ type: "active", active: v })));
