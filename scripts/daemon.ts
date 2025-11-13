@@ -337,6 +337,8 @@ async function updateVisible(old: Data) {
 register("update", "visibility", updateVisible);
 
 async function setTeamId() {
+	if (data.teamId != undefined) return;
+
 	while (true) {
 		const out =
 			(await runTeam("zenity --entry --text='Enter team ID' --title='Configure system'")).stdout;
