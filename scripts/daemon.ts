@@ -394,7 +394,9 @@ async function takeScreenshots() {
 
 		if (data.screenshotsEnabled == true) {
 			const screenshotPath = process.env["SCREENSHOT_PATH"]!;
-			await runTeam("xfce4-screenshooter", ["-f", "-m", "-s", screenshotPath]);
+			await exec("xfce4-screenshooter", ["-f", "-m", "-s", screenshotPath], {
+				env: await getXfceEnv() ?? {},
+			});
 			const b64 = (await readFile(screenshotPath)).toString("base64");
 			await client.request("screenshot", { team: teamId, data: b64, mac: macHash });
 			await rm(screenshotPath);
