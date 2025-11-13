@@ -455,7 +455,7 @@ async function processFeed() {
 			}
 
 			update({
-				teamIdWorks: true,
+				teamIdWorks: data.teamId != undefined,
 				firewall: event.state.teamProperties.firewallEnabled,
 				latestAnnouncementId: event.state.lastAnnouncementId,
 				latestFileIds: event.state.teamFiles,
@@ -469,7 +469,7 @@ async function processFeed() {
 			});
 		}
 	} catch (err: unknown) {
-		if (data.teamIdWorks == true) {
+		if (data.teamIdWorks == true || data.teamId == undefined) {
 			throw err;
 		}
 		console.error("couldn't fetch feed", err);
