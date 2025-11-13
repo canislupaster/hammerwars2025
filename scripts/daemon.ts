@@ -337,7 +337,7 @@ async function updateVisible(old: Data) {
 register("update", "visibility", updateVisible);
 
 async function setTeamId() {
-	while (data.teamId == undefined) {
+	while (true) {
 		const out =
 			(await runTeam("zenity --entry --text='Enter team ID' --title='Configure system'")).stdout;
 
@@ -351,8 +351,6 @@ async function setTeamId() {
 
 		await delay(5000);
 	}
-
-	await forever;
 }
 
 register("bg", "team id", setTeamId);
