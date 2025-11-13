@@ -388,7 +388,7 @@ export type API = {
 	teamInfo: { request: { id: number }; response: AdminTeamData };
 	getTeamFile: { request: { id: number }; response: { name: string; base64: string } };
 	teamFeed: {
-		request: { id: number };
+		request: { id: number | null };
 		feed: true;
 		response: {
 			type: "update";

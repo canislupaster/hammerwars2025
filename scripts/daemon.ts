@@ -89,15 +89,6 @@ type Data = Partial<
 
 let data: Readonly<Data> = {};
 
-const waitForDataChange = () =>
-	new Promise<Data>(res => {
-		const cb = (old: Data) => {
-			res(old);
-			updater.delete(cb);
-		};
-		updater.add(cb);
-	});
-
 if (await stat("data.json").catch(() => false) != false) {
 	data = parseExtra(await readFile("data.json", "utf-8")) as Readonly<Data>;
 }
@@ -353,6 +344,7 @@ async function setTeamId() {
 		const outNum = Number.parseInt(out);
 		if (isFinite(outNum)) {
 			update({ teamId: outNum, registeredTimeMs: Date.now() });
+			restart();
 		} else {
 			await runTeam("zenity --error --title='Invalid team ID'");
 		}
@@ -367,6 +359,8 @@ register("bg", "team id", setTeamId);
 
 const screenshotInterval = 1000*5;
 async function takeScreenshots() {
+	if (data.teamId == undefined) return;
+
 	const macHash = Buffer.from(
 		await crypto.subtle.digest(
 			"SHA-256",
@@ -379,11 +373,6 @@ async function takeScreenshots() {
 	console.log(`screenshot using mac hash ${macHash}`);
 
 	while (true) {
-		if (data.teamId == undefined) {
-			await waitForDataChange();
-			continue;
-		}
-
 		const teamId = data.teamId;
 
 		if (data.lastScreenshot != undefined) {
@@ -443,12 +432,9 @@ async function contestNotification(old: Data) {
 register("update", "notification", contestNotification);
 
 async function processFeed() {
-	while (data.teamId == undefined) await waitForDataChange();
-	const teamId = data.teamId;
+	console.log(`connecting to feed (team id = ${data.teamId ?? "none"})`);
 
-	console.log(`connecting to feed (team id = ${teamId})`);
-
-	const feed = client.feed("teamFeed", { id: teamId });
+	const feed = client.feed("teamFeed", { id: data.teamId ?? null });
 	console.log("connected to feed");
 
 	try {
@@ -515,9 +501,8 @@ async function setWallpaper() {
 	if (data.teamId == undefined) {
 		await copyFile("./wallpaper.png", wallpaperPath);
 		await reloadWallpaper();
+		return;
 	}
-
-	while (data.teamId == undefined) await waitForDataChange();
 
 	const info = await client.request("teamInfo", { id: data.teamId });
 	const w = 3900, h = 2340;

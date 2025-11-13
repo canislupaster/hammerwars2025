@@ -913,11 +913,20 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 
 	makeRoute(app, "teamFeed", {
 		feed: true,
-		validator: z.object({ id: z.int() }),
+		validator: z.object({ id: z.int().nullable() }),
 		handler: async function* handler(abort, c, { id }) {
 			await keyAuth(c, false);
 
 			const getTeamData = async () => {
+				if (id == null) {
+					return {
+						domJudgeCredentials: null,
+						teamFiles: [],
+						printerName: null,
+						unregisterMachineTimeMs: null,
+					};
+				}
+
 				const team = await transaction(trx => getDbCheck(trx, "team", id));
 				const domJudgeUser = team.domJudgeId != null
 					? domJudge.getTeamUsername(team.domJudgeId)
@@ -939,7 +948,7 @@ export async function makeRoutes(app: Hono<HonoEnv>) {
 			const getLastAnnouncement = async () => {
 				return (await transaction(trx =>
 					trx.selectFrom("announcement").select("id").where(a =>
-						a("team", "=", id).or("team", "is", null)
+						id != null ? a("team", "=", id).or("team", "is", null) : a("team", "is", null)
 					).orderBy("id", "desc").limit(1).executeTakeFirst()
 				))?.id ?? null;
 			};
