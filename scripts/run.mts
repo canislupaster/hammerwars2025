@@ -20,7 +20,7 @@ function err(...msg: string[]): never {
 }
 
 function gray(msg: string) {
-	console.log(styleText("black", msg));
+	console.log(styleText("gray", msg));
 }
 
 const logExec = (cmd: string, args: string[]) =>
@@ -435,7 +435,7 @@ async function run(
 			const output = join(dir, `${samp}-output.txt`);
 
 			for (const line of (await readFile(sampIn, "utf-8")).split("\n")) {
-				console.log(styleText(["gray", "italic"], `> ${line}`));
+				console.log(styleText(["blueBright", "italic"], `> ${line}`));
 			}
 
 			const prog = await startChildProgram({
